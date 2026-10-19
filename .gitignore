@@ -1,0 +1,8 @@
+# The code-server release tarball and its extracted tree are ~900 MB of third-party
+# build output; they are reproducible from github.com/coder/code-server releases.
+cs.tar.gz
+code-server-*/
+# Node runtime (reused from dsh-android, itself reproducible from nodejs.org)
+rt/
+node_modules/
+*.apk
