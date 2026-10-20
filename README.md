@@ -105,3 +105,28 @@ the workbench.
 Executables cannot live in `filesDir` on Android (noexec), so the node binary has to be
 installed as a jniLib and executed from `nativeLibraryDir` — the Octave port hit exactly
 this and worked around it the same way.
+
+## The release tarball ships prebuilts only — no sources
+
+Two things discovered while trying to start the cross-compile:
+
+1. `lib/vscode/node_modules/@vscode/spdlog/` contains only `build/`, `index.js` and
+   `package.json` — **no `binding.gyp`, no `src/`**. The same is true of the other native
+   modules in this tree. So there is nothing here to recompile: each of the four modules has
+   to be fetched from its own upstream (npm tarball or GitHub repo) at a version matching the
+   one VS Code pins, then built against the Android node headers.
+2. There is no `npm` and no `node-gyp` on this machine — the DSH runtime ships the `node`
+   binary only. Their absence is not fatal (a Node-API addon is just a shared object, so
+   clang can compile it directly), but any build script must not assume them.
+
+Also: `nodejs.org/dist/.../node-v26.4.0-headers.tar.gz` answers a HEAD request but the ~10 MB
+download times out through this network, so the headers have to be fetched during a window
+when the link is healthy (or taken from the Android runtime package itself).
+
+Practical order for the next session:
+1. fetch the four module sources at VS Code's pinned versions;
+2. fetch node v26.4.0 headers;
+3. build each with the NDK `aarch64-linux-android31-clang++ -shared -fPIC -I<node>/include/node`;
+4. `node-pty` will need the Termux-style patch: bionic has no `forkpty`, so open the pty with
+   `posix_openpt`/`grantpt`/`unlockpt` and fork by hand, or replace it with a pipes-based
+   `/system/bin/sh` spawn (which is what the user actually asked for: a shell like Termux's).
