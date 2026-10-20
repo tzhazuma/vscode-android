@@ -67,3 +67,41 @@ investigation (666 MB, node-pty present, node is glibc). No APK yet.
 Next concrete step: swap in the Android node, get `code-server --bind-addr 127.0.0.1:8080`
 to boot on the device, then wrap it in the WebView + foreground service shell taken from
 dsh-android.
+
+## Native-module inventory (measured, not guessed)
+
+`find . -name "*.node"` in `code-server-4.141.0-linux-arm64` gives 15 files. Feeding the
+macOS node into `out/node/entry.js` dies on the very first one (`argon2.node`, "slice is not
+valid mach-o"), which confirms every one of them is a Linux ELF that bionic cannot load.
+
+| module | what it is | needed on Android? |
+|---|---|---|
+| `@vscode/spdlog` | logging | yes — build for bionic |
+| `@vscode/sqlite3` | VS Code state / history store | yes — build for bionic |
+| `@parcel/watcher` | file-change watching | yes — build for bionic |
+| `node-pty` | integrated terminal | yes — the hard one |
+| `argon2` | login password hashing | **no** — run `--auth none` |
+| `kerberos` | Kerberos auth | no |
+| `@vscode/deviceid` (`windows.node`) | Windows telemetry id | no, Windows-only |
+| `@vscode/native-watchdog` | crash watchdog | no (optional) |
+| `@github/copilot-sdk-linux-arm64` | Copilot CLI | no — remove |
+| `extensions/copilot/*` | Copilot extension | no — remove |
+| `extensions/ms-vscode.js-debug/*win32*` | Windows debugger helper | no — Windows-only |
+
+So the honest minimum is **four modules** (spdlog, sqlite3, @parcel/watcher, node-pty), and
+`--auth none` removes the fifth. Everything else ships as JS or is platform-irrelevant.
+
+Removals are safe because the extension host loads native modules lazily: deleting
+`extensions/copilot` and the `@github/copilot-sdk-*` trees costs the Copilot feature, not
+the workbench.
+
+## Boot order on device
+
+    libnode.so          (reused from ~/dsh-android/rt/x/node, /system/bin/linker64)
+    + its .so deps      libc++_shared, libssl/libcrypto, icu78, sqlite3, zlib, cares, ffi
+    + the four modules  built with the NDK against the same node headers
+    → `libnode.so out/node/entry.js --bind-addr 127.0.0.1:8080 --auth none`
+
+Executables cannot live in `filesDir` on Android (noexec), so the node binary has to be
+installed as a jniLib and executed from `nativeLibraryDir` — the Octave port hit exactly
+this and worked around it the same way.
