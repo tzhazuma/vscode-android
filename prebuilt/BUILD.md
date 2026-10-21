@@ -69,3 +69,36 @@ of the npm tarball once npm is available.
 
 If VS Code only needs it for native logging, a stub exporting the same symbols may be
 enough to boot -- worth testing before chasing the real build.
+
+## @vscode/spdlog — the tarball route
+
+`microsoft/vscode-spdlog` does not exist, but the published npm package does, and curl can
+fetch it without npm:
+
+```sh
+V=0.15.8   # the version code-server pins
+curl -s -o spdlog.tgz "https://registry.npmjs.org/@vscode/spdlog/-/spdlog-$V.tgz"
+tar xzf spdlog.tgz && cd package
+git clone --depth 1 https://github.com/gabime/spdlog.git deps/spdlog   # its submodule
+
+$NDK/aarch64-linux-android31-clang++ -shared -fPIC -std=c++17 -O2 \
+  -I"$HDR" -I"$NAPI" -Ideps/spdlog/include -Isrc \
+  -DNODE_API_SWALLOW_UNTHROWABLE_EXCEPTIONS -DFMT_CONSTEVAL= \
+  src/main.cc src/logger.cc -o prebuilt/spdlog.node
+```
+
+The tarball ships the binding (`src/main.cc`, `src/logger.cc`) but not the spdlog library
+itself, because that is a git submodule; cloning it is the only missing piece.
+
+## Status: all four are built
+
+| module | size | notes |
+|---|---|---|
+| `watcher.node` | 562 KB | @parcel/watcher, inotify backend |
+| `pty.node` | 96 KB | node-pty, real pty via bionic's forkpty |
+| `sqlite3.node` | 1.8 MB | @vscode/sqlite3 + amalgamation with FTS/JSON1/RTREE |
+| `spdlog.node` | 654 KB | logging, built from the npm tarball + the spdlog submodule |
+
+All four are ARM aarch64 shared objects exporting `napi_register_module_v1` and needing
+only `libc++_shared`, `libm`, `libdl` and `libc` -- the same set the Android node runtime
+already ships.
