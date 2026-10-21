@@ -106,3 +106,22 @@ OPENSSL_CONF=/data/local/tmp/vscode/openssl.cnf \
 
 注意 `adb shell` 里用 `&` 后台跑会被回收（没有 `setsid`），日志文件都不会生成。
 要么让 adb 会话保持长连接，要么之后在 App 里用前台服务托管（dsh 那套壳可直接复用）。
+
+### 终端底座验证（真 PTY，不是管道）
+
+```js
+const pty = require('.../node_modules/node-pty');
+const p = pty.spawn('/system/bin/sh', ['-c', 'echo PTY_OK; uname -m; echo $0'], {...});
+```
+
+真机输出：
+
+```
+exit= 0
+output: "PTY_OK\r\naarch64\r\n/system/bin/sh"
+```
+
+关键在 `\r\n` —— 那是 PTY 的行规程（line discipline）把 `\n` 转成 `\r\n`，
+**管道不会有这个特征**。加上 `exit=0` 说明 `forkpty` 成功，
+所以 VS Code 的集成终端在 Android 上走的是真正的伪终端，
+`vim`、`top`、`less` 这类需要控制终端的全屏程序才有机会正常工作。
