@@ -38,3 +38,34 @@ resolve from libc at that API level. The built module carries
 So VS Code's terminal can have a **real pty**, not a pipes-based fallback.
 
 Both binaries export `napi_register_module_v1` and are plain ARM aarch64 shared objects.
+
+## @vscode/sqlite3
+
+Needs the SQLite amalgamation that the repo ships as a tarball, plus libuv headers
+(`uv.h` comes from the sparse node source clone at `native/nodehdr/deps/uv/include`).
+
+```sh
+cd native/sqlite3/deps && tar xzf sqlite-autoconf-3390400.tar.gz
+SQL=deps/sqlite-autoconf-3390400
+
+$NDK/aarch64-linux-android31-clang -c -fPIC -O2 -DSQLITE_THREADSAFE=1 \
+  -DSQLITE_ENABLE_FTS3 -DSQLITE_ENABLE_FTS4 -DSQLITE_ENABLE_FTS5 \
+  -DSQLITE_ENABLE_JSON1 -DSQLITE_ENABLE_RTREE -DHAVE_USLEEP=1 \
+  -I$SQL $SQL/sqlite3.c -o sqlite3.o
+
+$NDK/aarch64-linux-android31-clang++ -shared -fPIC -std=c++17 -O2 \
+  -DNAPI_DISABLE_CPP_EXCEPTIONS -DNODE_API_SWALLOW_UNTHROWABLE_EXCEPTIONS \
+  -I"$HDR" -I"$NAPI" -I native/nodehdr/deps/uv/include -I$SQL -Isrc \
+  src/backup.cc src/database.cc src/node_sqlite3.cc src/statement.cc sqlite3.o \
+  -o prebuilt/sqlite3.node
+```
+
+## Remaining: @vscode/spdlog
+
+`github.com/microsoft/vscode-spdlog` does not exist, and this machine has no npm to pull
+the published package, so its binding sources are not on disk. It is the last of the four.
+Options, in order: find the repo that actually hosts the binding, or take the source out
+of the npm tarball once npm is available.
+
+If VS Code only needs it for native logging, a stub exporting the same symbols may be
+enough to boot -- worth testing before chasing the real build.
