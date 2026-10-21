@@ -125,3 +125,41 @@ output: "PTY_OK\r\naarch64\r\n/system/bin/sh"
 **管道不会有这个特征**。加上 `exit=0` 说明 `forkpty` 成功，
 所以 VS Code 的集成终端在 Android 上走的是真正的伪终端，
 `vim`、`top`、`less` 这类需要控制终端的全屏程序才有机会正常工作。
+
+## 2026-10-22：VSCode 打包成独立 APK 并在真机跑通
+
+`out/VSCode-android-arm64.apk`（140 MB），包名 `com.vscode.android`。
+装上、点开就是 VS Code 工作台（截图 `screenshots/vscode-apk.png`）—— 活动栏、
+Welcome/Recent/Walkthroughs、Chat 面板、状态栏，全在，没有浏览器边框。
+
+壳直接复用 dsh 那套已经验证过的结构（前台服务 + WebView + nativeLibraryDir 执行），
+只改了这些：
+
+| 位置 | 改动 |
+|---|---|
+| `csDir()` | `files/cs`（原 `files/dsh`） |
+| 解包 | `assets/cs-bundle.zip` → 5037 个文件，938 ms |
+| 入口 | `<cs>/out/node/entry.js` |
+| 参数 | `--bind-addr 127.0.0.1:<port> --auth none` |
+| 模块链接 | 五个 `.node` → `jniLibs/lib*.so` 符号链接 |
+
+### 打包这一路踩的坑
+
+1. **zip 目录层级**：`zip -r bundle cs` 会把 `cs/` 也打进去，解到 `files/cs` 就变成
+   `files/cs/cs/...`。要从 `cs/` 内部打包（`zip -r bundle .`）。
+2. **`pm install` 后残留的“已解包”标记**：改了 bundle 但 marker 还在，会跳过重新解包 →
+   必须 `pm clear` 或把 marker 名字加版本号。
+3. **argon2 载入 SyntaxError**：`--auth none` 下根本不需要它，直接把 `argon2.cjs` 换成
+   JS stub，绕开原生模块。
+4. **WebView 停在日志页**：dsh 是从 stdout 里正则抓带 token 的 URL，code-server 不打那种
+   URL → 改成用自己绑定的端口直接构造 `http://127.0.0.1:<port>/` 交给 WebView。
+5. **Termux 权限报错是无害噪声**：`com.termux.permission.RUN_COMMAND` granted=false，
+   VSCode 不需要它，可以之后把那段调用去掉。
+
+### 真机验证
+
+```
+VscodeRuntime: dsh| info  HTTP server listening on http://127.0.0.1:8901/
+进程树: 19169 19008 libnode.so   (父进程就是 com.vscode.android)
+设备内自请求: HTTP 200 bytes 5805
+```

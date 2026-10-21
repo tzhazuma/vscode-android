@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Termux IPC permission. prot=dangerous, so only a real APK (not adb shell)
+         can hold it. -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Android 11+ package visibility: without this we cannot even resolve com.termux -->
+    <queries>
+        <package android:name="com.termux" />
+    </queries>
+
+    <!-- Not debuggable: a release build rejects a hardcoded debuggable flag, and the config
+         it was needed for (the model credentials in files/.dsh) is already in place.
+         Use the debug build type when run-as access is required. -->
+    <application
+        android:label="dsh"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:allowBackup="false"
+        android:extractNativeLibs="true"
+        android:usesCleartextTraffic="true"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Keeps the Node host alive across task switches. Without this the host
+             dies with the activity and the WebView loses its server. -->
+        <service
+            android:name=".VscodeService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="local dsh (deepseek-harness) node host; the app is a thin WebView over it" />
+        </service>
+    </application>
+</manifest>

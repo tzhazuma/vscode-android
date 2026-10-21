@@ -1,12 +1,19 @@
-# The code-server release tarball and its extracted tree are ~900 MB of third-party
-# build output; they are reproducible from github.com/coder/code-server releases.
-cs.tar.gz
-code-server-*/
-# Node runtime (reused from dsh-android, itself reproducible from nodejs.org)
-rt/
-node_modules/
-*.apk
+# Build outputs
+android-app/app/build/
+android-app/build/
+android-app/.gradle/
+android-app/local.properties
 
-# Cloned upstream sources for the native modules (reproducible via git clone)
+# Packaged inputs: reproducible (BUILD.md + the scripts in this repo regenerate them)
+android-app/app/src/main/assets/
+android-app/app/src/main/jniLibs/
+
+# Cloned upstream sources
 native/*/
-!native/*.md
+native/nodehdr/
+
+# Staging tree used to assemble the APK bundle
+stage/
+
+# Shipped binaries live in Releases, not in git
+out/
