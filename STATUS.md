@@ -49,3 +49,60 @@ $NDK/aarch64-linux-android31-clang++ -shared -fPIC -std=c++17 -O2 \
 四个模块里 `node-pty` 仍是最难的一个：它用的是 NAN（需要完整的 node 头文件，不只是 Node-API），
 而且 bionic 没有 `forkpty`。这也是为什么之前就定下「终端用管道 spawn `/system/bin/sh`」的备选路线 ——
 正好对上用户要的「终端能跑」。
+
+## 2026-10-22：VS Code 服务端在真机上跑通了
+
+这不是「构建成功」，是真的 serve 出了工作台。真机日志：
+
+```
+info  code-server 4.141.0 8b41915d25547e2edd553bab03ea4cbd621f98c5
+info  Using user-data-dir /data/local/tmp/vscode/data/code-server
+info  HTTP server listening on http://127.0.0.1:8080/
+info    - Authentication is disabled
+info  Session server listening on .../code-server-ipc.sock
+```
+
+设备上用 Android node 自请求确认：
+
+```
+HTTP 200 bytes 5782
+```
+
+浏览器打开就是完整工作台（截图 `screenshots/vscode-device.png`）：活动栏、Welcome/Recent、
+Next Up、Walkthroughs、Chat 面板、状态栏一应俱全。
+
+### 一路踩过的五个坑（都是真机实测出来的）
+
+1. **OpenSSL 配置指向 Termux 私有目录**
+   `OpenSSL configuration error: ... fopen(/data/data/com.termux/files/usr/etc/tls/openssl.cnf)`
+   —— Android node 是用 Termux 的 OpenSSL 工具链编的，OPENSSLDIR 被写死。
+   dsh 早就遇到过并解决了：给一个自己的空 `openssl.cnf`，用 `OPENSSL_CONF` 指过去。
+
+2. **`argon2.node` 是 Linux ELF**
+   `has bad ELF magic` —— 必须自己编（见 prebuilt/BUILD.md）。
+
+3. **macOS 的 `._*` 资源叉文件**
+   `dlopen failed: ".../._argon2.node" has bad ELF magic: 00051607`
+   node-gyp-build 按 glob 取文件，取到了 AppleDouble 垃圾。`find -name '._*' -delete` 解决。
+   用 macOS 的 `tar` 打包时要加 `COPYFILE_DISABLE=1`，否则每个文件都带一个 `._` 兄弟。
+
+4. **`argon2` 漏编 `ref.c`**
+   `cannot locate symbol "fill_segment"` —— `fill_segment` 在 `src/ref.c`，
+   而 binding.gyp 的条件分支只把 ref.c 或 opt.c 之一加进来，手工编时得自己补。
+
+5. **`HOME` 未设**
+   `error ENOENT: no such file or directory, mkdir '/.config'` —— 必须给可写 HOME。
+
+### 完整启动命令
+
+```sh
+cd /data/local/tmp/vscode/cs
+HOME=/data/local/tmp/vscode/home \
+XDG_DATA_HOME=/data/local/tmp/vscode/data \
+LD_LIBRARY_PATH=/data/local/tmp/vscode \
+OPENSSL_CONF=/data/local/tmp/vscode/openssl.cnf \
+./lib/node out/node/entry.js --bind-addr 127.0.0.1:8080 --auth none
+```
+
+注意 `adb shell` 里用 `&` 后台跑会被回收（没有 `setsid`），日志文件都不会生成。
+要么让 adb 会话保持长连接，要么之后在 App 里用前台服务托管（dsh 那套壳可直接复用）。
