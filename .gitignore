@@ -6,3 +6,7 @@ code-server-*/
 rt/
 node_modules/
 *.apk
+
+# Cloned upstream sources for the native modules (reproducible via git clone)
+native/*/
+!native/*.md
