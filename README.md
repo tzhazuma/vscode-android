@@ -17,6 +17,27 @@ that still gives you the actual VS Code workbench, offline, on-device — is:
 The workbench you get is the genuine VS Code UI (same source, same extensions API), because
 `code-server` *is* VS Code with a browser front-end. This is also how Coder ships it.
 
+## Status: it ships and it runs
+
+`android-v1` carries a 139 MB APK. On a vivo PA2573 (Android 16, arm64) it installs, extracts
+its bundle (5037 files, ~1 s), starts code-server on 127.0.0.1, and renders the full workbench
+inside the app with no browser chrome.
+
+The five native modules are cross-compiled for arm64-v8a with plain `clang++` -- no npm, no
+node-gyp, and no node source build:
+
+| module | how |
+|---|---|
+| `@parcel/watcher` | sources from GitHub, inotify backend |
+| `node-pty` | **no patch needed**: NDK 28's `pty.h` declares `forkpty` from API 23 |
+| `@vscode/sqlite3` | amalgamation with FTS3/4/5, JSON1, RTREE |
+| `@vscode/spdlog` | npm tarball plus the spdlog submodule it depends on |
+| `argon2` | npm tarball; replaced by a JS stub in the app because auth is disabled |
+
+Verified as the app's own uid (`run-as`): all four modules load, and node-pty spawns
+`/system/bin/sh` with output carrying CR-LF from the pty line discipline -- so the integrated
+terminal has a real pty, which is what full-screen programs need.
+
 ## What already exists that we reuse
 
 `~/dsh-android` solved the hard Android packaging problem for the same shape of app: a
