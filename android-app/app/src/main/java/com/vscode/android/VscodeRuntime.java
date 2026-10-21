@@ -211,8 +211,15 @@ public final class VscodeRuntime {
                             java.nio.file.Paths.get(link.getAbsolutePath()));
                 } catch (Throwable ignored) {
                 }
-                android.system.Os.symlink(target.getAbsolutePath(), link.getAbsolutePath());
-                LogFile.log(TAG, "linked " + pair[0] + " -> " + target);
+                /* Copy, do NOT symlink. Node resolves symlinks by default, so `pty.node` becomes
+                 * `libpty.so`, and Module._extensions then has no loader for ".so" -- it falls
+                 * back to the JavaScript loader, tries to parse an ELF header as source and dies
+                 * with "Invalid or unexpected token". Copying keeps the .node extension on a real
+                 * file. Total cost is about 3 MB, which is nothing next to the 47 MB node. */
+                java.nio.file.Files.copy(target.toPath(), link.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                link.setReadable(true, false);
+                LogFile.log(TAG, "copied " + pair[0] + " <- " + target);
             } catch (Throwable t) {
                 LogFile.log(TAG, "linkExecutables failed for " + pair[0] + ": " + t);
             }

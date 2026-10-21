@@ -163,3 +163,45 @@ VscodeRuntime: dsh| info  HTTP server listening on http://127.0.0.1:8901/
 进程树: 19169 19008 libnode.so   (父进程就是 com.vscode.android)
 设备内自请求: HTTP 200 bytes 5805
 ```
+
+## 2026-10-22 (2)：符号链接是错的 —— Node 会解析它，然后拿 ELF 当 JS 解析
+
+第一版 APK 装上去能开，但四个原生模块一个都加载不了，报的是：
+
+```
+Invalid or unexpected token
+```
+
+看着像 JS 语法错误，其实是模块加载走错了路。原因：
+
+1. 我用 `Os.symlink()` 把 `.../build/Release/pty.node` 指向 `nativeLibraryDir/libpty.so`
+   （这是 dsh 的做法，但 dsh 只这样分发 **可执行文件**，从不 require）。
+2. **Node 默认解析符号链接**（除非 `--preserve-symlinks`）。解析后真实路径以 `.so` 结尾。
+3. `Module._extensions` 里没有 `.so` 的加载器，于是回退到 **JS 加载器**，
+   把 ELF 头当源码解析 → `Invalid or unexpected token`。
+
+修法：**复制**而不是链接（总共约 3 MB，相对 47 MB 的 node 可以忽略）：
+
+```java
+java.nio.file.Files.copy(target.toPath(), link.toPath(),
+        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+```
+
+真机验证（以应用自己的 uid 跑，`run-as com.vscode.android`）：
+
+```
+OK   node-pty/build/Release/pty.node
+OK   @parcel/watcher/build/Release/watcher.node
+OK   @vscode/sqlite3/build/Release/vscode-sqlite3.node
+OK   @vscode/spdlog/build/Release/spdlog.node
+```
+
+终端（真 PTY）：
+
+```
+exit= 0
+output: "APP_PTY_OK\r\naarch64\r\n10372"      ← 10372 是应用的 uid
+```
+
+`\r\n` 说明确实走了 pty 的行规程，且是在应用进程/uid 下跑出来的，
+所以 VS Code 的集成终端在 APK 里可用，不是只有 adb shell 里能用。
