@@ -17,3 +17,5 @@ stage/
 
 # Shipped binaries live in Releases, not in git
 out/
+code-server-4.141.0-linux-arm64/
+cs.tar.gz
