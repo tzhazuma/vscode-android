@@ -338,3 +338,64 @@ E: Unable to determine a suitable packaging system type
 （`ar x pkg.deb && tar xf data.tar.xz -C $PREFIX`）。Termux 的二进制是相对路径链接
 （`DT_RUNPATH=$ORIGIN/../lib`），可以搬；但**脚本**里硬编码 Termux 路径的会失效，
 用之前要检查 shebang 和内部路径。
+
+## 2026-10-22：让内置 Termux 的 apt 真正能用（路径重定向）
+
+用户要求「改掉 apt 的路径，让内置 Termux 能调用 apt」。Termux 的 apt 把
+`/data/data/com.termux/files/usr/etc/apt` 编译进去了，但有两条生路，都验证了。
+
+### 关键：apt 支持 `APT_CONFIG` 全量重定向
+
+不必重编译。apt 在启动时最先读 `$APT_CONFIG` 指向的文件，那里面可以用 `Dir::*`
+把所有编译期目录改掉。写进 `files/usr/etc/apt/apt.conf`：
+
+```
+Dir::Etc              "<prefix>/etc/apt/"
+Dir::Etc::parts       "<prefix>/etc/apt/apt.conf.d"
+Dir::Etc::sourcelist  "<prefix>/etc/apt/sources.list"
+Dir::Etc::trusted     "<prefix>/etc/apt/trusted.gpg"
+Dir::Etc::trustedparts "<prefix>/etc/apt/trusted.gpg.d"
+Dir::State            "<prefix>/var/lib/apt/"
+Dir::State::status    "<prefix>/var/lib/dpkg/status"
+Dir::Cache            "<prefix>/var/cache/apt/"
+Dir::Bin::methods     "<prefix>/lib/apt/methods"     ← 少了这条会 "method driver ... could not be found"
+Dir::Bin::apt-key     "<prefix>/bin/apt-key"         ← 少了这条会 "Couldn't execute .../apt-key"
+Dir::Bin::gpg / gpgv / dpkg
+Acquire::https::CaInfo "<prefix>/etc/tls/cert.pem"   ← 少了这条会 "No system certificates available"
+```
+
+### 第二关：脚本的 shebang
+
+二进制是相对路径链接（`DT_RUNPATH=$ORIGIN`），可以搬；但**脚本不行** ——
+`apt-key`、`pkg` 等第一行是 `#!/data/data/com.termux/files/usr/bin/bash`。
+所以解包后要把 `bin/`、`libexec/`、`lib/apt/methods/` 里所有以 Termux 路径开头的
+shebang 改写成自己的 prefix。真机验证：
+
+```
+$ head -1 files/usr/bin/apt-key
+#!/data/user/0/com.vscode.android/files/usr/bin/sh
+```
+
+### 进展
+
+改完后 `apt-get update` 已经**成功下载索引**（588 kB Packages），说明
+配置重定向、TLS、method driver、脚本执行全部打通。
+
+### 还剩最后一个点：仓库签名密钥
+
+```
+W: GPG error: ... NO_PUBKEY 5A897D96E57CF20C
+E: The repository 'https://packages-cf.termux.dev/apt/termux-main stable' is not signed.
+```
+
+从仓库取出 `termux-keyring_3.14_all.deb` 解出 9 个密钥放进 `trusted.gpg.d`，
+但里面**不含**当前主密钥 `5A897D96E57CF20C`（keyring 包版本比仓库签名密钥旧）。
+
+两个选择：
+1. 拿到该密钥导进 `trusted.gpg.d`（最正确）；
+2. 用 `Acquire::AllowInsecureRepositories "true"` 放行（能用，但丧失完整性校验）。
+
+### 另外准备好的东西
+
+已从 Termux 仓库解析并下载了 `openssh` + `android-tools` 的**完整依赖树共 26 个包
+（12.8 MB）**，放在 `/tmp/termux-pkgs/debs`，可以绕过 apt 直接解包进 prefix。
