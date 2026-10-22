@@ -459,3 +459,41 @@ apt-get download 实测正常（`git_2.56.0_aarch64.deb` 4.5 MB 秒下）。
 `packages-aarch64.zip`（26.3 MB，2526 文件，920 符号链接）已经在 assets 里，
 首次启动解包到 prefix —— `adb`、`ssh`、`sshd`、`scp`、`sftp` 全部就位，
 不依赖 apt。
+
+## 2026-10-22：`pkg-install` 验证通过；dpkg 仍未攻克
+
+### pkg-install 可用（真机验证）
+
+```
+$ pkg-install jq
+pkg-install: unpacked into /data/user/0/com.vscode.android/files/usr
+$ jq --version
+jq-1.8.2
+```
+
+关键改进：不能用 `apt-get download`（只下单个包，jq 会缺 `libonig.so`），
+要改用 **`apt-get install -y --download-only --reinstall`** —— apt 会解析并下载
+**整棵依赖树**，但绝不调用 dpkg，所以完美绕开 dpkg 的启动失败。
+
+另外 `apt-get download` 写到**当前目录**而不是 `Dir::Cache::archives`，
+所以脚本里要 `cd` 进临时目录。
+
+### dpkg：试过 LD_PRELOAD，不行
+
+思路：与其逐个重定向配置，不如在 libc 层把 `/data/data/com.termux/files/usr`
+前缀整体映射到本 prefix，这样 dpkg 和任何 Termux 二进制都能原生工作。
+
+写了 `native/termuxpath.c`（11 KB shim），拦截
+`open/openat/fopen/opendir/scandir/stat/lstat/fstatat/access/faccessat/mkdir/unlink/rename/symlink/readlink`。
+
+**结果：不行**。`.
+`/proc/self/maps` 里能看到 shim 被加载了（4 个映射），但**符号没有插桩** ——
+连最简单的 `ls /data/data/com.termux/files/usr/bin` 依然走到真实路径。这是 bionic 的
+已知行为：`LD_PRELOAD` 的库会被加载，但对 eager-binding（`-z now`）的可执行文件不生效。
+
+补充发现：dpkg 的配置目录读取用的是 libc **内部调用**（`scandir` → 内部 `__opendir`），
+即使插桩生效也拦不到，需要额外覆盖。
+
+**结论**：dpkg 在不重编译的前提下基本无解。它的配置目录路径是 `#define` 进去的，
+无法用参数绕过，字符串长度又和我们的 prefix 不同（42 vs 34 字节）无法原地二进制替换。
+`pkg-install` 是实际可行的路径。

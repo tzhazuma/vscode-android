@@ -186,9 +186,11 @@ public final class TermuxBootstrap {
                 + "export PREFIX\n"
                 + "tmp=$(mktemp -d)\n"
                 + "trap 'rm -rf \"$tmp\"' EXIT\n"
-                // apt-get download writes to the working directory, not the archives dir.
-                + "(cd \"$tmp\" && apt-get download \"$@\") >/dev/null\n"
-                + "for deb in \"$tmp\"/*.deb; do\n"
+                // --download-only makes apt resolve and fetch the whole dependency tree, but
+                // never invoke dpkg (which cannot run here). Plain "apt-get download" would
+                // fetch only the named package and leave jq without libonig, for instance.
+                + "apt-get install -y --download-only --reinstall \"$@\" >/dev/null\n"
+                + "for deb in \"$PREFIX\"/var/cache/apt/archives/*.deb; do\n"
                 + "  dpkg-deb -x \"$deb\" \"$tmp/root\"\n"
                 + "done\n"
                 + "src=\"$tmp/root" + TERMUX_PREFIX + "\"\n"
