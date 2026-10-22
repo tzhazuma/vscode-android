@@ -681,3 +681,56 @@ $ zstd --version
 
 shim 由 `TermuxBootstrap.installDpkgShim()` 在每次启动时写入并保持最新
 （内容变了才覆写），所以重装应用不会丢。
+
+## 2026-10-23：apt-get remove —— 部分可用
+
+### 已实现
+
+shim 增加了卸载能力，并**在解包时记录文件清单**
+（`var/lib/dpkg/info/<pkg>.list`），否则卸载根本不知道删什么：
+
+```sh
+dpkg --remove <pkg>   # 直接调用：删除 .list 里的文件 → 清空目录 → 标记 deinstall ok config-files
+```
+
+**直接调用验证通过**：
+
+```
+$ dpkg --remove tree
+rc=0
+tree after: gone
+```
+
+### 但 apt 的卸载流程不经过我们的 shim
+
+抓 argv 日志发现，`apt-get remove` 期间 dpkg 只被这样调用：
+
+```
+ARGV: --print-foreign-architectures   (×5)
+ARGV: --assert-multi-arch
+```
+
+**没有 `--remove`**。apt 输出：
+
+```
+The following packages will be REMOVED:
+  tree
+...
+W: APT had planned for dpkg to do more than it reported back (0 vs 2).
+```
+
+也就是说 apt 计划了 2 个 dpkg 操作，dpkg 却报告 0 个 —— apt 认为操作已完成或无法执行，
+于是根本没真正调起来。原因很可能是 `var/lib/dpkg/status` 里树形记录不完整
+（apt 提示 "1 not fully installed or removed"），而我们 shim 对 `--configure -a`
+的静默处理让 apt 停在了不一致状态。
+
+### 结论
+
+| 操作 | 状态 |
+|---|---|
+| `apt-get install` | ✅ 端到端可用 |
+| `apt-get remove` | ⚠️ shim 逻辑可用，但 apt 不调用它 |
+
+要彻底修好 remove，需要让 status 文件与 apt 的预期完全一致
+（包括 `install ok installed` 状态的正确迁移），这是下一层的工作。
+目前卸载的可靠方式是直接删文件，或用 `pkg-install` 覆盖式重装。
