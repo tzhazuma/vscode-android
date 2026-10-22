@@ -167,6 +167,7 @@ public final class TermuxBootstrap {
                 // unsigned repositories makes apt usable; integrity is no longer verified, which
                 // suits a sideloaded dev environment but should be replaced by importing the key.
                 + "Acquire::AllowInsecureRepositories \"true\";\n";
+        writeTerminalProfiles(ctx);
         int repaired = repairKeyringLinks(prefix(ctx));
         if (repaired > 0) {
             BootLog.say("termux: repaired " + repaired + " keyring links");
@@ -283,6 +284,63 @@ public final class TermuxBootstrap {
             BootLog.say("termux bootstrap: symlinks failed: " + e);
         }
         return made;
+    }
+
+    /**
+     * Write code-server's user settings with the terminal profiles.
+     *
+     * <p>Done from code rather than by hand so a reinstall does not lose it: the prefix is
+     * absolute, and without APT_CONFIG the toybox/termux shells cannot reach the package index
+     * that writeAptConfig sets up.
+     */
+    public static void writeTerminalProfiles(Context ctx) {
+        File dir = new File(ctx.getFilesDir(), ".local/share/code-server/User");
+        //noinspection ResultOfMethodCallIgnored
+        dir.mkdirs();
+        String p = prefix(ctx).getAbsolutePath();
+        String json = ""
+                + "{\n"
+                + "  \"terminal.integrated.defaultProfile.linux\": \"termux\",\n"
+                + "  \"terminal.integrated.profiles.linux\": {\n"
+                + "    \"termux\": {\n"
+                + "      \"path\": \"" + p + "/bin/bash\",\n"
+                + "      \"args\": [\"--norc\", \"-i\"],\n"
+                + "      \"env\": {\n"
+                + "        \"PREFIX\": \"" + p + "\",\n"
+                + "        \"HOME\": \"" + p + "/../home\",\n"
+                + "        \"TMPDIR\": \"" + p + "/../tmp\",\n"
+                + "        \"LD_LIBRARY_PATH\": \"" + p + "/lib\",\n"
+                + "        \"PATH\": \"" + p + "/bin:/system/bin:/system/xbin\",\n"
+                + "        \"APT_CONFIG\": \"" + p + "/etc/apt/apt.conf\",\n"
+                + "        \"TERM\": \"xterm-256color\",\n"
+                + "        \"LANG\": \"en_US.UTF-8\"\n"
+                + "      }\n"
+                + "    },\n"
+                + "    \"android\": {\n"
+                + "      \"path\": \"/system/bin/sh\",\n"
+                + "      \"args\": [\"-i\"],\n"
+                + "      \"env\": { \"TERM\": \"xterm-256color\" }\n"
+                + "    },\n"
+                + "    \"termux-ssh\": {\n"
+                + "      \"path\": \"" + p + "/bin/bash\",\n"
+                + "      \"args\": [\"--norc\", \"-i\"],\n"
+                + "      \"env\": {\n"
+                + "        \"PREFIX\": \"" + p + "\",\n"
+                + "        \"HOME\": \"" + p + "/../home\",\n"
+                + "        \"LD_LIBRARY_PATH\": \"" + p + "/lib\",\n"
+                + "        \"PATH\": \"" + p + "/bin:/system/bin\",\n"
+                + "        \"APT_CONFIG\": \"" + p + "/etc/apt/apt.conf\",\n"
+                + "        \"TERM\": \"xterm-256color\"\n"
+                + "      }\n"
+                + "    }\n"
+                + "  }\n"
+                + "}\n";
+        try (java.io.FileOutputStream w = new java.io.FileOutputStream(
+                new File(dir, "settings.json"))) {
+            w.write(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.io.IOException e) {
+            BootLog.say("could not write terminal profiles: " + e);
+        }
     }
 
     /** The path Termux's scripts hard-code in their shebangs. */

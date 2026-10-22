@@ -497,3 +497,42 @@ jq-1.8.2
 **结论**：dpkg 在不重编译的前提下基本无解。它的配置目录路径是 `#define` 进去的，
 无法用参数绕过，字符串长度又和我们的 prefix 不同（42 vs 34 字节）无法原地二进制替换。
 `pkg-install` 是实际可行的路径。
+
+## 2026-10-22：adb / ssh 已内置并可用，终端配置由代码生成
+
+### 二进制验证（真机）
+
+```
+$ ./usr/bin/adb version
+Android Debug Bridge version 1.0.41
+$ ./usr/bin/ssh -V
+OpenSSH_10.6p1, OpenSSL 3.6.5 29 Sep 2026
+```
+
+这些来自 `packages-aarch64.zip`（26 个 deb 解包重组），不依赖 apt。
+
+### 终端 profile 改为代码生成
+
+原先是我手工 `cat` 进设备的 `settings.json`，重装就丢。现在改由
+`TermuxBootstrap.writeTerminalProfiles()` 每次启动重写，包含：
+
+| profile | 路径 | 说明 |
+|---|---|---|
+| `termux`（默认） | `usr/bin/bash --norc -i` | 真 bash，带 `PREFIX`/`HOME`/`TMPDIR`/`LD_LIBRARY_PATH`/`APT_CONFIG` |
+| `android` | `/system/bin/sh -i` | toybox |
+| `termux-ssh` | `usr/bin/bash --norc -i` | 同样的环境，用于跑 `ssh`/`sshd` |
+
+`APT_CONFIG` 一定要带上，否则 apt 又会去读 Termux 的绝对路径。
+
+### 关于「adbd 能不能连本机」
+
+Termux 的 adb 可以 `adb connect 127.0.0.1:<port>`，但前提是本机 adbd 在无线调试端口上
+**真的 accept 请求**。之前实测本机 5555 端口是「接单但不回包」的死监听
+（`ro.adb.secure=1`，需要已授权的 RSA 公钥）。即使命令行能连上，也还需要在系统弹窗里
+点「允许」——那一步只能人工确认。所以 adb 在这个环境里**能用来连其它设备**，
+不适合当作控制本机的通道。
+
+### 当前 APK
+
+198 MB，包含：code-server、Termux bootstrap（33 MB）、依赖包（26 MB）、
+Insiders 图标、targetSdk 28（exec 解锁）。
