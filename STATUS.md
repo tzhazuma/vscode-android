@@ -787,3 +787,38 @@ RUN_COMMAND 的命令在 Termux 的服务上下文里一直跑着，Termux 就�
   `pgrep: not found` 导致 sshd 从未启动。已改成无条件启动。
 - 必须在装好后 `pm grant com.vscode.android com.termux.permission.RUN_COMMAND`，
   否则 dispatch 直接返回 `granted=false`。
+
+## 2026-10-23：dpkg shim 补上 postinst 与卸载路径
+
+### postinst / prerm 现在会执行
+
+解包时用 `dpkg-deb --control` 取出控制脚本，把里面的 Termux 前缀改写成我们的，
+存到 `var/lib/dpkg/info/<pkg>.{postinst,preinst,prerm,postrm,config}`；
+`--configure` 时从 `/` 目录、以 `configure <version>` 调用 postinst —— 和 dpkg 的行为一致。
+
+### 状态迁移修好了
+
+`--configure --pending` 原先把所有 `install ok unpacked` 迁移到 `install ok installed`，
+但 `set_status` 的 awk 用段落模式（`RS=""`）时 `$0` 是整段、`$` 匹配不到行尾，所以静默失败。
+改成比较第一行之后，状态迁移正常（真机确认 `Status: install ok installed`）。
+
+### 卸载：两条路径都已实现且直调可用
+
+| 调用 | 结果 |
+|---|---|
+| `dpkg --remove tree` | ✅ rc=0，文件删除 |
+| `echo "tree deinstall" \| dpkg --set-selections` | ✅ 直接完成卸载 |
+
+`--set-selections` 是 apt 真正用来投递卸载意图的入口（喂 `<pkg> deinstall` 到 stdin），
+之前完全没实现，所以 apt 认为"已经记录、无需再做"。
+
+### 但 `apt-get remove` 仍然不改文件
+
+apt 报 `APT had planned for dpkg to do more than it reported back (0 vs 3)`，
+文件仍在。说明 apt 的调用序列里，真正该触发删除的那一步没有走到我们的实现上。
+直调可用、经 apt 不可用 —— 剩下的是 apt 内部状态机的问题，不是 shim 逻辑。
+
+### 另外两个解析 bug 也修了
+
+- `--unpack --auto-deconfigure <deb>`：原实现遇到 `--auto-deconfigure` 就 break，**根本没解包**；
+- `--status-fd 1` 的 `1` 被当成包名传给 `remove_one`（报了 `status: remove 1`）。
