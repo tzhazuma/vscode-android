@@ -151,3 +151,125 @@ Practical order for the next session:
 4. `node-pty` will need the Termux-style patch: bionic has no `forkpty`, so open the pty with
    `posix_openpt`/`grantpt`/`unlockpt` and fork by hand, or replace it with a pipes-based
    `/system/bin/sh` spawn (which is what the user actually asked for: a shell like Termux's).
+
+## The embedded terminal is a real Termux environment
+
+code-server's terminal is a real PTY (`node-pty` needs no patch — bionic has `forkpty` since
+API 23), but by default it spawns `/system/bin/sh`, which is toybox and has no bash, no
+coreutils worth the name and no package manager. The app therefore carries Termux's own
+bootstrap in its assets and unpacks it into `files/usr`.
+
+### It only works because targetSdk is 28
+
+Android 10 and later refuse `execve` on anything under an app's data directory. That is why
+dsh's shell had to live in `nativeLibraryDir` as a shared object. Termux itself runs bash from
+`/data/data/com.termux/files/usr/bin` and gets away with it because it targets API 28, below
+the cutoff. This app does the same, and it is the single decision the whole feature rests on —
+verified by writing an ELF to `files/`, chmod +x, exec'ing it and getting
+`rc=0 out=EXEC_FROM_DATA_OK`. `lintVitalRelease` treats targetSdk 28 as fatal, so release lint
+is disabled; Play would reject the APK, which does not matter for sideloading.
+
+### Unpacking the bootstrap
+
+`bootstrap-aarch64.zip` (33 MB, 3774 entries) is an asset. A plain unzip produces an unusable
+prefix for two reasons:
+
+* zip stores no POSIX permission bits, so nothing comes out executable;
+* zip stores no symlinks, so Termux ships `SYMLINKS.txt` listing them as `target←./path`
+  (U+2190), 1213 of them.
+
+`TermuxBootstrap.ensure()` sets the executable bit under `bin/` and `lib/` and recreates every
+link with `Os.symlink`. Termux's bash still looks for
+`/data/data/com.termux/files/usr/etc/bash.bashrc`, which is compiled in and cannot exist here,
+so the terminal profile passes `--norc` and supplies `PREFIX`/`HOME`/`TMPDIR`/`LD_LIBRARY_PATH`
+itself.
+
+### apt works
+
+Termux's apt has `/data/data/com.termux/files/usr/etc/apt` compiled in, but it reads
+`$APT_CONFIG` first, so a generated `apt.conf` redirects everything with `Dir::Etc`,
+`Dir::State`, `Dir::Cache` and `Dir::Log`. Four more settings were each found by its own
+failure:
+
+| setting | without it |
+|---|---|
+| `Dir::Bin::methods` | `The method driver .../lib/apt/methods/https could not be found` |
+| `Acquire::https::CaInfo` | `No system certificates available` |
+| `Dir::Bin::apt-key` | `Couldn't execute /data/data/com.termux/.../apt-key` |
+| script shebangs rewritten | same, because those scripts start with `#!/data/data/com.termux/...` |
+
+Binaries are relocatable (`DT_RUNPATH=$ORIGIN`); scripts are not. Anything under `bin/`,
+`libexec/` and `lib/apt/methods` that starts with `#!` gets the Termux prefix rewritten — a
+survey found 43 such scripts and 364 ELF binaries carrying the string, and only the scripts can
+be rewritten safely.
+
+Keys were the last puzzle: apt reported `NO_PUBKEY 5A897D96E57CF20C` although that key *is* in
+the bundled keyring. Its entry in `trusted.gpg.d` is a symlink into Termux's own absolute
+prefix, so it dangled while the real file sat in `share/termux-keyring`. Re-pointing those links
+fixed it, and `apt-get update` now verifies the signature properly.
+
+### dpkg cannot run, so a shim stands in
+
+```
+dpkg: error: error opening configuration directory
+  '/data/data/com.termux/files/usr/etc/dpkg/dpkg.cfg.d': Permission denied
+```
+
+That path is compiled in and no argument changes it — `dpkg --help` dies before parsing. The
+binary is preserved as `dpkg.real` and `bin/dpkg` is a script that unpacks with `dpkg-deb`,
+relocates the Termux prefix, runs the maintainer scripts it extracted with
+`dpkg-deb --control`, records the package in dpkg's status file and replays the `--status-fd`
+protocol apt listens for.
+
+`apt-get install` works end to end. `apt-get remove` does not go through apt: it leaves the
+files behind and reports `APT had planned for dpkg to do more than it reported back`, even
+though `dpkg --remove <pkg>` and `echo "<pkg> deinstall" | dpkg --set-selections` both remove
+them when called directly.
+
+### adb and ssh are included
+
+`packages-aarch64.zip` (26 MB) carries openssh and android-tools with their whole dependency
+tree, resolved and extracted on the build machine because apt's signature could not be trusted
+at that point. `adb version` reports 1.0.41 and `ssh -V` reports OpenSSH_10.6p1. Note that adb
+cannot control *this* device: connecting to localhost needs an adbd that accepts on the wireless
+port, and this one takes the TCP connection and never answers (ro.adb.secure=1 without an
+authorised key, and authorising needs a tap on a system dialog).
+
+### ssh into the separate Termux app
+
+The app can also ssh into the Termux installation you have next to it, and land in *its*
+environment — `$PREFIX` comes back as `/data/data/com.termux/files/usr`.
+
+Setup, all automatic once the permission is granted:
+
+1. `adb shell pm grant com.vscode.android com.termux.permission.RUN_COMMAND` — **required after
+   every install**; without it the dispatch reports `granted=false` and nothing happens.
+2. The app generates an ed25519 key with the bundled `ssh-keygen`.
+3. It asks Termux, via RUN_COMMAND, to append the public key to `~/.ssh/authorized_keys` and
+   start `sshd`.
+
+That last script has two non-obvious requirements. Termux's base install has **no procps**, so
+a `pgrep` guard silently prevented sshd from ever starting; and once sshd runs, it still accepts
+nothing, because **Android freezes cached apps** — the listener stays in LISTEN while every
+thread is stopped, so `connect()` hangs instead of being refused. That also explains why this
+device's adbd takes connections and never answers. The fix is to keep the dispatched command
+alive:
+
+```sh
+sshd 2>/dev/null || true
+while true; do sleep 300; done
+```
+
+RUN_COMMAND keeps executing in Termux's service context, so Termux is never treated as a cached
+app and sshd can accept. Verified: the connection returns `SSH_INTO_TERMUX_OK` and Termux's own
+prefix.
+
+### Files you may want
+
+| path | what |
+|---|---|
+| `files/usr` | the Termux prefix (bash, coreutils, apt, openssh, adb) |
+| `files/usr/etc/apt/apt.conf` | the redirection written on every start |
+| `files/usr/bin/pkg-install` | download-and-relocate installer used when dpkg cannot run |
+| `files/ssh/termux_ed25519` | the key used for the Termux ssh profile |
+| `.local/share/code-server/User/settings.json` | the terminal profiles, regenerated on every start |
