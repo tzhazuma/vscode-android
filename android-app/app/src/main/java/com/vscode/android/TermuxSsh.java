@@ -85,7 +85,13 @@ public final class TermuxSsh {
                 + "[ -f ~/.ssh/ssh_host_ed25519_key ] || ssh-keygen -A >/dev/null 2>&1\n"
                 + "sshd 2>/dev/null || true\n"
                 + "sleep 1\n"
-                + "echo SSHD_STARTED\n";
+                + "echo SSHD_STARTED\n"
+                // Android freezes cached apps: Termux's threads stop, its listening socket stays
+                // in LISTEN, and every connect to 8022 hangs instead of being refused (measured:
+                // shell -> our own 8900 returns immediately, shell -> Termux's 8022 times out,
+                // for any uid). Keeping the dispatched command alive keeps Termux out of the
+                // frozen state, which is what makes sshd actually accept().
+                + "while true; do sleep 300; done\n";
         String err = TermuxDispatch.dispatch(ctx, script, "vscode-ssh-authorise");
         return err;
     }

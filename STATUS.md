@@ -734,3 +734,56 @@ W: APT had planned for dpkg to do more than it reported back (0 vs 2).
 要彻底修好 remove，需要让 status 文件与 apt 的预期完全一致
 （包括 `install ok installed` 状态的正确迁移），这是下一层的工作。
 目前卸载的可靠方式是直接删文件，或用 `pkg-install` 覆盖式重装。
+
+## 2026-10-23：SSH 进独立 Termux —— 成功。根因是 Android 的 app freezer
+
+### 真机验证
+
+从 VSCode 应用内置环境执行：
+
+```
+$ ssh -p 8022 -i files/ssh/termux_ed25519 127.0.0.1 "echo SSH_INTO_TERMUX_OK; uname -m; echo \$PREFIX"
+SSH_INTO_TERMUX_OK
+aarch64
+/data/data/com.termux/files/usr
+```
+
+注意最后一行是 **Termux 自己的 prefix**，证明进去的是独立的 Termux 应用，不是内置环境。
+
+### 根因：app freezer，不是 sshd 配置
+
+之前的现象是「端口在 LISTEN，但 connect() 挂住不返回」。逐层排除：
+
+| 假设 | 实验 | 结论 |
+|---|---|---|
+| 跨 uid 回环被限制 | shell 连我们自己应用的 8900 | ✅ rc=0，回环没问题 |
+| sshd 没启动 | `ps` | 进程在（u0_a238，状态 Ss） |
+| sshd 未监听 | `/proc/net/tcp` | `0.0.0.0:8022` LISTEN |
+| 换 uid 也一样 | 从 Termux 自己的 uid 连 | ❌ 同样挂住 |
+
+真正的解释：**Android 12+ 会把后台的「缓存应用」冻结**（cgroup freezer）。
+Termux 被冻结后，它所有线程停住 —— 监听 socket 依然显示 LISTEN（内核状态不变），
+但没有线程 `accept()`，于是新连接只能挂住（backlog 塞满也不会 RST）。
+
+这个解释同时说明了之前 adbd 5555「接单不回包」的怪现象。
+
+### 修法：让 Termux 保持活跃
+
+给 RUN_COMMAND 的脚本末尾加一个长循环：
+
+```sh
+sshd 2>/dev/null || true
+while true; do sleep 300; done
+```
+
+RUN_COMMAND 的命令在 Termux 的服务上下文里一直跑着，Termux 就不会被判为缓存应用、
+不会被冻结，sshd 才能真正 `accept()`。
+
+加上之后 `nc` 立刻从超时变成 rc=0，SSH 随即登录成功。
+
+### 顺带
+
+- 之前 `sshd` 的启动脚本用 `pgrep` 判断是否在跑 —— Termux 基础安装**没有 procps**，
+  `pgrep: not found` 导致 sshd 从未启动。已改成无条件启动。
+- 必须在装好后 `pm grant com.vscode.android com.termux.permission.RUN_COMMAND`，
+  否则 dispatch 直接返回 `granted=false`。
