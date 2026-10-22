@@ -178,6 +178,26 @@ public class VscodeService extends Service {
             } catch (Throwable t) {
                 BootLog.say("exec-from-data threw " + t);
             }
+            // Real bash from Termux's bootstrap, unpacked into files/usr. Only possible because
+            // this app targets API 28 (see TermuxBootstrap and the exec-from-data test above).
+            TermuxBootstrap.ensure(this);
+            try {
+                File sh = new File(TermuxBootstrap.prefix(this), "bin/bash");
+                if (sh.isFile() && sh.canExecute()) {
+                    Process pr = new ProcessBuilder(sh.getAbsolutePath(),
+                            "-c", "echo TERMUX_OK; uname -m; echo $PREFIX")
+                            .redirectErrorStream(true).start();
+                    byte[] b = new byte[512];
+                    int got = pr.getInputStream().read(b);
+                    int rc = pr.waitFor();
+                    BootLog.say("termux bash rc=" + rc + " out="
+                            + (got > 0 ? new String(b, 0, got).trim().replace('\n', '|') : ""));
+                } else {
+                    BootLog.say("termux bash missing or not executable: " + sh);
+                }
+            } catch (Throwable t) {
+                BootLog.say("termux bash test threw " + t);
+            }
             BootLog.say("=== boot done ===");
         } catch (Throwable t) {
             BootLog.say("BOOT_EXCEPTION " + t);

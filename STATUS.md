@@ -259,3 +259,49 @@ Termux 官方 bootstrap（`bootstrap-aarch64.zip`，33,071,189 字节，3774 个
 
 Termux 的 bash 需要 `PREFIX=<files>/usr`、`HOME=<files>/home`、
 `LD_LIBRARY_PATH=<files>/usr/lib` 等环境变量，这些在 profile 的 `env` 里给。
+
+## 2026-10-22：Termux 引导真正跑通
+
+`TermuxBootstrap.ensure()` 把官方 `bootstrap-aarch64.zip` 解到 `files/usr`，
+并补上 zip 丢失的两样东西：
+
+1. **可执行位** —— zip 不存 POSIX 权限，所以解完要递归 `setExecutable`（bin/ 和 lib/）；
+2. **符号链接** —— zip 不存 symlink，Termux 用 `SYMLINKS.txt` 记录，
+   格式是 `目标←./path`（中间是 U+2190），共 **1213 条**。java 里按箭头切开、
+   删掉 `./` 前缀、`Os.symlink` 重建。
+
+真机验证（debug 包 + run-as）：
+
+```
+-rwx--x--x 880416 files/usr/bin/bash
+-rwx--x--x  38040 files/usr/bin/apt
+$ PREFIX=.../files/usr HOME=... LD_LIBRARY_PATH=.../usr/lib ./usr/bin/bash -c 'echo TERMUX_BASH_OK; uname -m; echo $PREFIX'
+TERMUX_BASH_OK
+aarch64
+/data/user/0/com.vscode.android/files/usr
+```
+
+（Termux 的 bash 会尝试读 `/data/data/com.termux/files/usr/etc/bash.bashrc`，
+那是它编译期写死的默认 rc 路径，必然 permission denied，无害；
+所以终端 profile 里用 `--norc -i`，再自己设 `PREFIX`/`HOME`/`TMPDIR`/`LD_LIBRARY_PATH`。）
+
+### 终端 profile
+
+写进 `files/.local/share/code-server/User/settings.json`（956 字节），三个可选：
+
+| profile | 说明 |
+|---|---|
+| `termux`（默认） | `files/usr/bin/bash`，真 bash + coreutils + apt |
+| `android` | `/system/bin/sh`，toybox |
+| `bash-toybox` | `files/bin/bash`，ELF shim → `/system/bin/sh` |
+
+### 注意
+
+`bootstrap-aarch64.zip`（33 MB）被 gitignore，新克隆需要自己下载：
+
+```sh
+curl -L -C - -o android-app/app/src/main/assets/bootstrap-aarch64.zip \
+  https://github.com/termux/termux-packages/releases/latest/download/bootstrap-aarch64.zip
+```
+
+GitHub 直连会被 TUN 截断到 13.7 MB，**必须** `-C -` 断点续传。
