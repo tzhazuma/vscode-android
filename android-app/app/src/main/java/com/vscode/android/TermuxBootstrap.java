@@ -131,6 +131,7 @@ public final class TermuxBootstrap {
         //noinspection ResultOfMethodCallIgnored
         etc.mkdirs();
         String p = prefix(ctx).getAbsolutePath();
+        // A shell inside the *standalone* Termux app, over ssh to its sshd on 127.0.0.1.
         String conf = ""
                 + "// Written by com.vscode.android: make Termux's apt use this app's prefix.\n"
                 + "Dir \"" + p + "/\";\n"
@@ -298,6 +299,7 @@ public final class TermuxBootstrap {
         //noinspection ResultOfMethodCallIgnored
         dir.mkdirs();
         String p = prefix(ctx).getAbsolutePath();
+        String sshCmd = TermuxSsh.sshCommand(ctx).replace("\\", "\\\\").replace("\"", "\\\"");
         String json = ""
                 + "{\n"
                 + "  \"terminal.integrated.defaultProfile.linux\": \"termux\",\n"
@@ -320,6 +322,17 @@ public final class TermuxBootstrap {
                 + "      \"path\": \"/system/bin/sh\",\n"
                 + "      \"args\": [\"-i\"],\n"
                 + "      \"env\": { \"TERM\": \"xterm-256color\" }\n"
+                + "    },\n"
+                + "    \"termux-app-ssh\": {\n"
+                + "      \"path\": \"" + p + "/bin/bash\",\n"
+                + "      \"args\": [\"--norc\", \"-i\", \"-c\", \"" + sshCmd + "\"],\n"
+                + "      \"env\": {\n"
+                + "        \"PREFIX\": \"" + p + "\",\n"
+                + "        \"HOME\": \"" + p + "/../home\",\n"
+                + "        \"LD_LIBRARY_PATH\": \"" + p + "/lib\",\n"
+                + "        \"PATH\": \"" + p + "/bin:/system/bin\",\n"
+                + "        \"TERM\": \"xterm-256color\"\n"
+                + "      }\n"
                 + "    },\n"
                 + "    \"termux-ssh\": {\n"
                 + "      \"path\": \"" + p + "/bin/bash\",\n"

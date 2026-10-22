@@ -536,3 +536,36 @@ Termux 的 adb 可以 `adb connect 127.0.0.1:<port>`，但前提是本机 adbd �
 
 198 MB，包含：code-server、Termux bootstrap（33 MB）、依赖包（26 MB）、
 Insiders 图标、targetSdk 28（exec 解锁）。
+
+## 2026-10-23：ssh 到「独立 Termux 应用」—— 差最后一步
+
+目标是让 VSCode 里的终端 ssh 进**安卓上单独的 Termux**（`com.termux`），
+而不是内置的那份。链路已经打通大半：
+
+1. **权限**：`com.vscode.android` 声明了 `com.termux.permission.RUN_COMMAND`，
+   但**默认不授予**，必须 `pm grant com.vscode.android com.termux.permission.RUN_COMMAND`。
+   未授予时 `dispatch` 直接返回 `granted=false`，什么都不会发生。
+
+2. **密钥**：用内置 prefix 里的 `ssh-keygen` 生成 ed25519 密钥对
+   （`files/ssh/termux_ed25519`）。
+
+3. **投递**：通过 RUN_COMMAND 让 Termux 自己执行脚本，把公钥追加到
+   `~/.ssh/authorized_keys`。**已验证成功** —— Termux 的
+   `files/home/.ssh/authorized_keys` 里确实出现了我们的公钥。
+
+4. **sshd**：第一版脚本用 `pgrep` 判断是否在跑，但 **Termux 基础安装里没有 procps**，
+   `pgrep: not found` 导致 sshd 从未启动。改成无条件 `sshd 2>/dev/null || true` 后，
+   **8022 端口起来了**（`0.0.0.0:8022` 和 `[::]:8022` 都在 LISTEN）。
+
+5. **最后一步没通**：从应用内置环境
+   `ssh -p 8022 -i ... 127.0.0.1` **连接超时**。端口在监听，所以不是网络不可达 ——
+   是 sshd 接受了 TCP 但不处理（很可能 accept 后 fork 失败，或 PAM/权限问题）。
+   这与本机 adbd 的表现完全一致（能连上、不回包）。
+
+   下一步方向：查 Termux sshd 的启动参数（`-D`/`-e` 输出到 stderr）、
+   看是不是缺少 `/etc/passwd` 之类的运行条件。
+
+### 另外
+
+- `RUN_COMMAND` 权限必须每次装机后手动 `pm grant`，README 里要写明。
+- Termux 版本 0.119.0-beta.3，sshd 已安装。
