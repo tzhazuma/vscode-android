@@ -168,6 +168,7 @@ public final class TermuxBootstrap {
                 // unsigned repositories makes apt usable; integrity is no longer verified, which
                 // suits a sideloaded dev environment but should be replaced by importing the key.
                 + "Acquire::AllowInsecureRepositories \"true\";\n";
+        installDpkgShim(ctx);
         writeTerminalProfiles(ctx);
         int repaired = repairKeyringLinks(prefix(ctx));
         if (repaired > 0) {
@@ -357,6 +358,141 @@ public final class TermuxBootstrap {
     }
 
     /** The path Termux's scripts hard-code in their shebangs. */
+    /**
+     * Put a dpkg shim in place.
+     *
+     * <p>Termux's real dpkg aborts on startup -- its configuration directory is compiled in as
+     * /data/data/com.termux/files/usr/etc/dpkg/dpkg.cfg.d and no option changes that -- so
+     * "apt-get install" could download packages and then fail at the unpack step. The shim
+     * unpacks with dpkg-deb, relocates the Termux path prefix, records the package in dpkg's
+     * status file and replays the --status-fd protocol apt listens on. The real binary is kept
+     * as dpkg.real.
+     */
+    private static void installDpkgShim(Context ctx) {
+        File bin = new File(prefix(ctx), "bin");
+        File real = new File(bin, "dpkg.real");
+        File shim = new File(bin, "dpkg-shim");
+        File target = new File(bin, "dpkg");
+        try {
+            if (!real.isFile() && target.isFile()) {
+                // First run: move the genuine binary aside before it is overwritten.
+                java.nio.file.Files.copy(target.toPath(), real.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                //noinspection ResultOfMethodCallIgnored
+                real.setExecutable(true, false);
+            }
+            String script = "" + SCRIPT;
+            byte[] want = script.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] have = shim.isFile()
+                    ? java.nio.file.Files.readAllBytes(shim.toPath()) : null;
+            if (have == null || !java.util.Arrays.equals(have, want)) {
+                try (java.io.FileOutputStream w = new java.io.FileOutputStream(shim)) {
+                    w.write(want);
+                }
+                //noinspection ResultOfMethodCallIgnored
+                shim.setExecutable(true, false);
+                java.nio.file.Files.copy(shim.toPath(), target.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                //noinspection ResultOfMethodCallIgnored
+                target.setExecutable(true, false);
+                BootLog.say("dpkg shim installed");
+            }
+        } catch (Exception e) {
+            BootLog.say("dpkg shim failed: " + e);
+        }
+    }
+
+    private static final String SCRIPT = ""
+                + "#!/data/user/0/com.vscode.android/files/usr/bin/bash\n"
+                + "# dpkg shim: Termux's real dpkg has /data/data/com.termux/files/usr/etc/dpkg/dpkg.cfg.d\n"
+                + "# compiled in and aborts before it parses a single argument, so apt-get install could fetch\n"
+                + "# packages but never unpack them. This stands in for it: it unpacks with dpkg-deb (which works)\n"
+                + "# and replays enough of the --status-fd protocol for apt to believe the operation succeeded.\n"
+                + "set -u\n"
+                + "PREFIX=/data/user/0/com.vscode.android/files/usr\n"
+                + "# apt invokes dpkg with a minimal environment and no PATH, so every helper this script needs\n"
+                + "# (mkdir, mktemp, cp, grep) has to be reachable on its own.\n"
+                + "export PATH=$PREFIX/bin:/system/bin:/system/xbin\n"
+                + "export LD_LIBRARY_PATH=$PREFIX/lib\n"
+                + "export TMPDIR=/data/user/0/com.vscode.android/files/tmp\n"
+                + "REAL=$PREFIX/bin/dpkg.real\n"
+                + "STATUS_FD=\"\"\n"
+                + "DB=$PREFIX/var/lib/dpkg/status\n"
+                + "mkdir -p \"$PREFIX/var/lib/dpkg\" \"$PREFIX/var/lib/dpkg/info\"\n"
+                + "\n"
+                + "args=(\"$@\")\n"
+                + "for ((i=0; i<${#args[@]}; i++)); do\n"
+                + "  case \"${args[$i]}\" in\n"
+                + "    --status-fd) STATUS_FD=\"${args[$((i+1))]}\" ;;\n"
+                + "    --status-fd=*) STATUS_FD=\"${args[$i]#--status-fd=}\" ;;\n"
+                + "  esac\n"
+                + "done\n"
+                + "\n"
+                + "emit() {  # emit <status-word> <pkg> [version]\n"
+                + "  [ -z \"$STATUS_FD\" ] && return 0\n"
+                + "  { echo \"status: $1 $2 ${3:-}\"; } >&\"$STATUS_FD\" 2>/dev/null || true\n"
+                + "}\n"
+                + "\n"
+                + "unpack_one() {\n"
+                + "  local deb=\"$1\" name ver arch\n"
+                + "  name=$(dpkg-deb -f \"$deb\" Package 2>/dev/null)\n"
+                + "  ver=$(dpkg-deb -f \"$deb\" Version 2>/dev/null)\n"
+                + "  arch=$(dpkg-deb -f \"$deb\" Architecture 2>/dev/null)\n"
+                + "  [ -z \"$name\" ] && return 1\n"
+                + "  emit \"unpack\" \"$name\" \"$ver\"\n"
+                + "  local tmp; tmp=$(mktemp -d) || return 1\n"
+                + "  dpkg-deb -x \"$deb\" \"$tmp\" || { rm -rf \"$tmp\"; emit \"unpack\" \"$name\" \"\"; return 1; }\n"
+                + "  local src=\"$tmp/data/data/com.termux/files/usr\"\n"
+                + "  [ -d \"$src\" ] || src=\"$tmp\"\n"
+                + "  cp -a \"$src/.\" \"$PREFIX/\" 2>/dev/null\n"
+                + "  rm -rf \"$tmp\"\n"
+                + "  # Record what we installed so apt's dependency resolution sees it next time.\n"
+                + "  if ! grep -q \"^Package: $name$\" \"$DB\" 2>/dev/null; then\n"
+                + "    {\n"
+                + "      echo \"Package: $name\"\n"
+                + "      echo \"Status: install ok unpacked\"\n"
+                + "      echo \"Version: $ver\"\n"
+                + "      echo \"Architecture: $arch\"\n"
+                + "      echo \"\"\n"
+                + "    } >> \"$DB\"\n"
+                + "  fi\n"
+                + "  emit \"unpack\" \"$name\" \"\"\n"
+                + "}\n"
+                + "\n"
+                + "case \"${1:-}\" in\n"
+                + "  --version|-l|--list|--print-architecture|--print-foreign-architectures|--audit|--assert*)\n"
+                + "    case \"${1:-}\" in\n"
+                + "      --print-architecture) echo \"aarch64\" ;;\n"
+                + "      --audit|--assert*) : ;;\n"
+                + "      *) echo \"Debian 'dpkg' (shim over dpkg-deb) 1.22\" ;;\n"
+                + "    esac\n"
+                + "    exit 0 ;;\n"
+                + "esac\n"
+                + "\n"
+                + "rc=0\n"
+                + "i=0\n"
+                + "while [ $i -lt ${#args[@]} ]; do\n"
+                + "  a=\"${args[$i]}\"\n"
+                + "  case \"$a\" in\n"
+                + "    --unpack|-i|--install)\n"
+                + "      i=$((i+1))\n"
+                + "      while [ $i -lt ${#args[@]} ] && [ \"${args[$i]}\" != \"${args[$i]#-}\" ]; do i=$((i+1)); done\n"
+                + "      while [ $i -lt ${#args[@]} ]; do\n"
+                + "        f=\"${args[$i]}\"\n"
+                + "        case \"$f\" in\n"
+                + "          -*) break ;;\n"
+                + "          *.deb) unpack_one \"$f\" || rc=$? ;;\n"
+                + "        esac\n"
+                + "        i=$((i+1))\n"
+                + "      done\n"
+                + "      continue ;;\n"
+                + "    --configure|-a|--pending|--triggers*|--force-*|--no-*)\n"
+                + "      i=$((i+1)); continue ;;\n"
+                + "    *) i=$((i+1)) ;;\n"
+                + "  esac\n"
+                + "done\n"
+                + "exit $rc\n";
+
     private static final String TERMUX_PREFIX = "/data/data/com.termux/files/usr";
 
     /**

@@ -619,3 +619,65 @@ $ head -1 bin/pkg
 - `dpkg`：配置目录，启动即失败（`pkg-install` 已绕过）
 - `bash`：`/data/data/com.termux/files/usr/etc/bash.bashrc`（用 `--norc` 规避）
 - `ld.so` 的默认搜索路径：靠 `LD_LIBRARY_PATH` 覆盖
+
+## 2026-10-23：apt-get install 终于能用了 —— dpkg 用兼容层接管
+
+### 先做了 ELF 硬编码 triage，结论很干净
+
+实测 prefix 里的常用工具（`--version`）：
+
+| 结果 | 工具 |
+|---|---|
+| ✅ 正常 | `dpkg-deb`、`git`、`ssh`、`curl`、`tar`、`unzip`、`jq`、`nano`、`gpgv` |
+| ❌ 失败 | **只有 `dpkg`** |
+| 未安装（非路径问题） | perl、python3、wget、make、node、npm、vim、gpg、bc、sqlite3 |
+
+所以在 364 个含 Termux 路径字符串的 ELF 里，**真正会因此崩掉的只有 dpkg**。
+
+### dpkg 的解法：不重编译，写兼容层
+
+`dpkg` 的配置目录是编译期写死的，无法用参数绕过。但它对 apt 暴露的行为很有限，
+所以用一个脚本接管：
+
+```sh
+/usr/bin/dpkg       ← 我们的 shim（2.6 KB）
+/usr/bin/dpkg.real  ← 原二进制，保留
+```
+
+shim 做四件事：
+
+1. 解析 `--unpack` / `-i` / `--configure` 等参数；
+2. 用 **`dpkg-deb -x`** 解包（这个工具本身是好的）；
+3. 把 `data/data/com.termux/files/usr/...` **重定位**到本 prefix；
+4. 往 `var/lib/dpkg/status` 写一条记录，并用 `--status-fd` 回放 apt 期望的协议。
+
+两个坑：
+- apt 调用 dpkg 时**不传 PATH**，脚本里必须自己 `export PATH=$PREFIX/bin:/system/bin`，
+  否则 `mkdir: command not found`；
+- shebang 必须写**绝对路径** `#!/data/user/.../usr/bin/bash`，
+  Android 上没有 `/usr/bin/env`。
+
+### 真机验证
+
+```
+$ apt-get install -y --reinstall zstd
+...
+0 upgraded, 0 newly installed, 1 reinstalled, 0 to remove
+$ zstd --version
+*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***
+```
+
+只剩一条无害警告 `APT had planned for dpkg to do more than it reported back (0 vs 5)`，
+不影响安装结果。**postinst 脚本依然不会执行**（shim 不跑它们）。
+
+### 现在 apt 的完整能力
+
+| 操作 | 状态 |
+|---|---|
+| `apt-get update` | ✅ 签名验证正常 |
+| `apt-get install` | ✅ **端到端可用**（dpkg shim） |
+| `apt-get remove` | ⚠️ 未实现（shim 没处理） |
+| postinst 脚本 | ❌ 不执行 |
+
+shim 由 `TermuxBootstrap.installDpkgShim()` 在每次启动时写入并保持最新
+（内容变了才覆写），所以重装应用不会丢。
