@@ -569,3 +569,53 @@ Insiders 图标、targetSdk 28（exec 解锁）。
 
 - `RUN_COMMAND` 权限必须每次装机后手动 `pm grant`，README 里要写明。
 - Termux 版本 0.119.0-beta.3，sshd 已安装。
+
+## 2026-10-23：Termux 硬编码路径普查，脚本已全部修复
+
+### 普查方法
+
+在 prefix 的 `bin/` 下全量搜索字符串 `/data/data/com.termux/files/usr`：
+
+```sh
+cd files/usr && grep -rl /data/data/com.termux/files/usr bin | wc -l
+```
+
+### 结果
+
+| 类别 | 数量 | 处理 |
+|---|---|---|
+| **脚本**（`#!` 开头） | **43** | ✅ 已全部按 prefix 改写 |
+| **ELF 二进制** | **364** | 只能靠改配置 / 重编译 / 拦截，不能文本替换 |
+
+改写后复查：`407 → 364`，差值正好等于脚本数，说明**没有漏掉任何脚本**，
+也没有误改二进制。
+
+### 修复方式（`rewriteShebangs` → 全文件改写）
+
+原来的实现只改**首行**含 Termux 路径的脚本，漏掉了在正文里引用的
+（`pkg`、`termux-*` 系列都是这种）。现在：只要是 `#!` 开头的文件，就**全文替换**
+Termux 前缀。验证：
+
+```sh
+$ grep -c /data/data/com.termux/files/usr bin/pkg
+0
+$ head -1 bin/pkg
+#!/data/user/0/com.vscode.android/files/usr/bin/bash
+```
+
+### 364 个 ELF 的处理策略
+
+不能文本替换（路径长度不同，会破坏 ELF）。按影响分三类：
+
+1. **启动即用绝对路径的**（`dpkg` 是典型）—— 影响大但数量少；
+2. **只在 `--help` / 默认值里出现的** —— 绝大多数，实际无害；
+3. **可通过配置重定向的** —— `apt` 系列已用 `APT_CONFIG` 解决。
+
+所以真正需要处理的只是第 1 类的一小撮。逐个确认它们是下一步，
+而不是盲目重编译 364 个程序。
+
+### 已知仍然硬编码的
+
+- `dpkg`：配置目录，启动即失败（`pkg-install` 已绕过）
+- `bash`：`/data/data/com.termux/files/usr/etc/bash.bashrc`（用 `--norc` 规避）
+- `ld.so` 的默认搜索路径：靠 `LD_LIBRARY_PATH` 覆盖

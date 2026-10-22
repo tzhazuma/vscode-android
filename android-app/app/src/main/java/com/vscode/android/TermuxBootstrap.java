@@ -46,7 +46,7 @@ public final class TermuxBootstrap {
         // there even when the expensive unpack already happened on a previous run.
         if (marker.isFile()) {
             writeAptConfig(ctx);
-            File stamp = new File(prefix, ".shebangs-v1");
+            File stamp = new File(prefix, ".paths-v3");
             if (!stamp.isFile()) {
                 BootLog.say("termux bootstrap: rewrote " + rewriteShebangs(prefix) + " shebangs");
                 try {
@@ -384,14 +384,16 @@ public final class TermuxBootstrap {
                     }
                     if (got < 4 || head[0] != '#' || head[1] != '!') continue;
                     String first = new String(head, 0, got, java.nio.charset.StandardCharsets.UTF_8);
-                    int nl = first.indexOf('\n');
-                    if (nl < 0 || !first.substring(0, nl).contains(TERMUX_PREFIX)) continue;
+                    // Only scripts are rewritten: an ELF that happens to contain the string gets
+                    // corrupted by a text replacement of a different length.
+                    if (!first.startsWith("#!")) continue;
                     byte[] all = java.nio.file.Files.readAllBytes(f.toPath());
                     String text = new String(all, java.nio.charset.StandardCharsets.UTF_8);
-                    int lineEnd = text.indexOf('\n');
-                    if (lineEnd < 0) continue;
-                    String fixed = text.substring(0, lineEnd).replace(
-                            TERMUX_PREFIX, prefix.getAbsolutePath()) + text.substring(lineEnd);
+                    // Replace the prefix everywhere, not only in the shebang: a survey of this
+                    // prefix found 43 scripts naming it, and most do so in ordinary statements
+                    // (pkg, termux-* helpers) rather than on the first line.
+                    String fixed = text.replace(TERMUX_PREFIX, prefix.getAbsolutePath());
+                    if (fixed.equals(text)) continue;
                     java.nio.file.Files.write(f.toPath(),
                             fixed.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                     n++;
