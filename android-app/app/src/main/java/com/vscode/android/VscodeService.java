@@ -155,6 +155,29 @@ public class VscodeService extends Service {
                 }
             });
             BootLog.say("dsh web launched, pid=" + (process != null ? "ok" : "?"));
+            // Can this app exec a binary from its own data directory? Android 10+ forbids it
+            // unless targetSdk < 29, which is the loophole Termux lives on. This decides whether
+            // a Termux bootstrap can run here at all, so it is measured rather than assumed.
+            try {
+                File tb = new File(getFilesDir(), "testbash");
+                java.io.InputStream in = getAssets().open("testbash");
+                try (java.io.FileOutputStream out = new java.io.FileOutputStream(tb)) {
+                    byte[] buf = new byte[65536];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                }
+                in.close();
+                tb.setExecutable(true, false);
+                Process pr = new ProcessBuilder(tb.getAbsolutePath(), "-c", "echo EXEC_FROM_DATA_OK")
+                        .redirectErrorStream(true).start();
+                byte[] outb = new byte[256];
+                int got = pr.getInputStream().read(outb);
+                int rc = pr.waitFor();
+                BootLog.say("exec-from-data rc=" + rc + " out="
+                        + (got > 0 ? new String(outb, 0, got).trim() : ""));
+            } catch (Throwable t) {
+                BootLog.say("exec-from-data threw " + t);
+            }
             BootLog.say("=== boot done ===");
         } catch (Throwable t) {
             BootLog.say("BOOT_EXCEPTION " + t);

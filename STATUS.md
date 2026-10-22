@@ -205,3 +205,57 @@ output: "APP_PTY_OK\r\naarch64\r\n10372"      ← 10372 是应用的 uid
 
 `\r\n` 说明确实走了 pty 的行规程，且是在应用进程/uid 下跑出来的，
 所以 VS Code 的集成终端在 APK 里可用，不是只有 adb shell 里能用。
+
+## 2026-10-22：targetSdk 28 解锁了「exec 应用数据目录」，这是内置 Termux 的前提
+
+### 为什么之前只能跑 nativeLibraryDir 里的东西
+
+Android 10+ 禁止对应用数据目录 `execve`，所以 dsh 的 bash 必须做成 `jniLibs/libbashsh.so`。
+但 **Termux 自己就是把 bash 放在 `/data/data/com.termux/files/usr/bin/`** —— 它能这么做，
+是因为它的 **targetSdk 是 28**（低于 29 的祖父条款）。
+
+### 实测验证（不是推测）
+
+把本应用的 `targetSdk` 从 35 降到 28，然后在 `VscodeService` 启动时做了一次自检：
+把 assets 里的一个 ELF 写到 `files/testbash`、`setExecutable`、`ProcessBuilder` 执行：
+
+```
+I VscodeAndroid: boot done
+I VscodeAndroid: exec-from-data rc=0 out=EXEC_FROM_DATA_OK
+I VscodeRuntime: dsh| info  HTTP server listening on http://127.0.0.1:8900/
+```
+
+**rc=0 且输出了 EXEC_FROM_DATA_OK**，同时 code-server 照常在 8900 监听 —— 说明：
+
+1. 应用数据目录里的二进制**可以执行**了；
+2. 降低 targetSdk **没有破坏** VS Code 本身。
+
+### 连带影响
+
+- `lintVitalRelease` 会把 targetSdk 28 判为致命错误，需在 build.gradle 里
+  `lint { checkReleaseBuilds = false; abortOnError = false }`。
+- targetSdk 28 意味着 Play 商店不会接受，但本项目是侧载分发，无影响；
+  存储行为回到 legacy（本应用本来就用 MANAGE_EXTERNAL_STORAGE）。
+
+### 已经准备好的材料
+
+Termux 官方 bootstrap（`bootstrap-aarch64.zip`，33,071,189 字节，3774 个条目，
+含 `bin/bash`）已下载。注意 GitHub 直连会被 TUN 截断（13.7 MB / 33 MB），
+需要用 `curl -C -` 断点续传补齐。
+
+### 下一步（终端方案）
+
+给 VS Code 配多个可选终端 profile，写进
+`files/.local/share/code-server/User/settings.json`：
+
+```json
+"terminal.integrated.profiles.linux": {
+  "termux":  { "path": "/data/user/0/com.vscode.android/files/usr/bin/bash", "args": ["-l"] },
+  "android": { "path": "/system/bin/sh" },
+  "proot":   { "path": "<files>/proot", "args": ["-0","-r","<files>/rootfs","/bin/bash"] }
+},
+"terminal.integrated.defaultProfile.linux": "termux"
+```
+
+Termux 的 bash 需要 `PREFIX=<files>/usr`、`HOME=<files>/home`、
+`LD_LIBRARY_PATH=<files>/usr/lib` 等环境变量，这些在 profile 的 `env` 里给。
