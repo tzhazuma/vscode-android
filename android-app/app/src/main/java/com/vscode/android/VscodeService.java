@@ -181,6 +181,7 @@ public class VscodeService extends Service {
             // Real bash from Termux's bootstrap, unpacked into files/usr. Only possible because
             // this app targets API 28 (see TermuxBootstrap and the exec-from-data test above).
             TermuxBootstrap.ensure(this);
+            TermuxBootstrap.ensurePackages(this);
             try {
                 File sh = new File(TermuxBootstrap.prefix(this), "bin/bash");
                 if (sh.isFile() && sh.canExecute()) {

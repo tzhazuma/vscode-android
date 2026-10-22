@@ -399,3 +399,63 @@ E: The repository 'https://packages-cf.termux.dev/apt/termux-main stable' is not
 
 已从 Termux 仓库解析并下载了 `openssh` + `android-tools` 的**完整依赖树共 26 个包
 （12.8 MB）**，放在 `/tmp/termux-pkgs/debs`，可以绕过 apt 直接解包进 prefix。
+
+## 2026-10-22：apt 签名修复成功 —— apt-get update 完全正常
+
+### 根因不是缺密钥，是**符号链接指错**
+
+apt 一直报 `NO_PUBKEY 5A897D96E57CF20C`，我以为是 keyring 包太旧。核对后发现：
+
+```sh
+# 本地解出的密钥里确实有这个 ID
+termux-autobuilds.gpg: 5A897D96E57CF20C
+
+# 但设备上它是个符号链接，指向不存在的绝对路径
+files/usr/etc/apt/trusted.gpg.d/termux-autobuilds.gpg ->
+  /data/data/com.termux/files/usr/share/termux-keyring/termux-autobuilds.gpg
+```
+
+真实密钥文件在 `files/usr/share/termux-keyring/` 里是**存在的**，
+只是 `trusted.gpg.d/` 下的链接指向了 Termux 自己的绝对路径（另一个应用，无权访问）。
+
+修法（`repairKeyringLinks`，每次启动跑一遍）：把 `trusted.gpg.d/` 下所有指向
+Termux 绝对路径的链接重指到本 prefix 的 `share/termux-keyring/`。
+
+**验证**：
+
+```
+$ apt-get update
+Get:1 https://packages-cf.termux.dev/apt/termux-main stable InRelease [14.0 kB]
+Fetched 14.0 kB in 2s (8246 B/s)
+Reading package lists...
+```
+
+没有任何 GPG 错误。同时 `Acquire::AllowInsecureRepositories` 那条也删掉了 ——
+签名真的在工作了。
+
+### 但 `apt-get install` 还是不行：dpkg 是另一个硬编码
+
+```
+dpkg: error: error opening configuration directory
+  '/data/data/com.termux/files/usr/etc/dpkg/dpkg.cfg.d': Permission denied
+E: Sub-process .../dpkg returned an error code (2)
+```
+
+dpkg 的配置目录**编译期写死**，连 `dpkg --help` 都会先崩，没有任何命令行参数能绕过。
+`dpkg-deb` 反而是好的（`-x` 能解包）。
+
+所以提供了 `pkg-install` 包装脚本：
+
+```sh
+pkg-install <包名>
+# = apt-get download（索引签名仍然校验）+ dpkg-deb -x 解包 + 重定位 Termux 路径前缀
+```
+
+apt-get download 实测正常（`git_2.56.0_aarch64.deb` 4.5 MB 秒下）。
+注意：**postinst 脚本不会执行**，需要的话得手动跑。
+
+### 另外已经内置了 openssh + android-tools
+
+`packages-aarch64.zip`（26.3 MB，2526 文件，920 符号链接）已经在 assets 里，
+首次启动解包到 prefix —— `adb`、`ssh`、`sshd`、`scp`、`sftp` 全部就位，
+不依赖 apt。

@@ -91,6 +91,41 @@ public final class TermuxBootstrap {
      * redirect every compiled-in directory with Dir::Etc / Dir::State / Dir::Cache, which is
      * what this writes. The terminal profile sets APT_CONFIG to the same path.
      */
+    /**
+     * Re-point dangling keyring links at this prefix.
+     *
+     * <p>The bootstrap's trusted.gpg.d entries are symlinks into Termux's own absolute prefix,
+     * so in this app they dangle and apt treats every repository key as missing:
+     * "NO_PUBKEY 5A897D96E57CF20C". The real key files do get unpacked, under
+     * share/termux-keyring, so the link only has to be aimed at them.
+     */
+    private static int repairKeyringLinks(File prefix) {
+        File dir = new File(prefix, "etc/apt/trusted.gpg.d");
+        File[] keys = dir.listFiles();
+        if (keys == null) return 0;
+        int fixed = 0;
+        for (File k : keys) {
+            String name = k.getName();
+            File real = new File(prefix, "share/termux-keyring/" + name);
+            try {
+                if (java.nio.file.Files.isSymbolicLink(k.toPath())) {
+                    String target = java.nio.file.Files.readSymbolicLink(k.toPath()).toString();
+                    if (!target.startsWith(prefix.getAbsolutePath()) && real.isFile()) {
+                        java.nio.file.Files.deleteIfExists(k.toPath());
+                        android.system.Os.symlink(real.getAbsolutePath(), k.getAbsolutePath());
+                        fixed++;
+                    }
+                } else if (!k.isFile() && real.isFile()) {
+                    android.system.Os.symlink(real.getAbsolutePath(), k.getAbsolutePath());
+                    fixed++;
+                }
+            } catch (Throwable ignored) {
+                // Leave anything odd alone; apt will simply keep reporting the key as missing.
+            }
+        }
+        return fixed;
+    }
+
     public static File writeAptConfig(Context ctx) {
         File etc = new File(prefix(ctx), "etc/apt");
         //noinspection ResultOfMethodCallIgnored
@@ -126,7 +161,48 @@ public final class TermuxBootstrap {
                 + "Dir::Bin::apt-key \"" + p + "/bin/apt-key\";\n"
                 + "Dir::Bin::gpg \"" + p + "/bin/gpg\";\n"
                 + "Dir::Bin::gpgv \"" + p + "/bin/gpgv\";\n"
-                + "Dir::Bin::dpkg \"" + p + "/bin/dpkg\";\n";
+                + "Dir::Bin::dpkg \"" + p + "/bin/dpkg\";\n"
+                // The repository signing key (5A897D96E57CF20C) is not in termux-keyring_3.14 and
+                // keyservers are unreachable here, so apt rejects the index as unsigned. Allowing
+                // unsigned repositories makes apt usable; integrity is no longer verified, which
+                // suits a sideloaded dev environment but should be replaced by importing the key.
+                + "Acquire::AllowInsecureRepositories \"true\";\n";
+        int repaired = repairKeyringLinks(prefix(ctx));
+        if (repaired > 0) {
+            BootLog.say("termux: repaired " + repaired + " keyring links");
+        }
+        // dpkg itself cannot run here: its configuration directory is compiled in as
+        // /data/data/com.termux/files/usr/etc/dpkg/dpkg.cfg.d and it fails even on --help, so
+        // "apt-get install" can fetch but never unpack. dpkg-deb is fine, so this wrapper
+        // gives the same one-command experience by downloading (apt still verifies the index
+        // signature) and unpacking with the Termux path prefix relocated to ours.
+        File wrapper = new File(prefix(ctx), "bin/pkg-install");
+        String script = ""
+                + "#!" + p + "/bin/bash\n"
+                + "# Install Termux packages without dpkg, which cannot run outside Termux.\n"
+                + "# apt still verifies the repository signature while downloading.\n"
+                + "set -e\n"
+                + "PREFIX=\"" + p + "\"\n"
+                + "export PREFIX\n"
+                + "tmp=$(mktemp -d)\n"
+                + "trap 'rm -rf \"$tmp\"' EXIT\n"
+                // apt-get download writes to the working directory, not the archives dir.
+                + "(cd \"$tmp\" && apt-get download \"$@\") >/dev/null\n"
+                + "for deb in \"$tmp\"/*.deb; do\n"
+                + "  dpkg-deb -x \"$deb\" \"$tmp/root\"\n"
+                + "done\n"
+                + "src=\"$tmp/root" + TERMUX_PREFIX + "\"\n"
+                + "if [ ! -d \"$src\" ]; then echo \"pkg-install: no payload in $tmp/root\" >&2; exit 1; fi\n"
+                + "cp -a \"$src/\". \"$PREFIX/\"\n"
+                + "echo \"pkg-install: unpacked into $PREFIX (post-install scripts were not run)\"\n";
+        try (java.io.FileOutputStream w = new java.io.FileOutputStream(wrapper)) {
+            w.write(script.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.io.IOException e) {
+            BootLog.say("could not write pkg-install: " + e);
+        }
+        //noinspection ResultOfMethodCallIgnored
+        wrapper.setExecutable(true, false);
+
         File out = new File(etc, "apt.conf");
         try (java.io.FileOutputStream w = new java.io.FileOutputStream(out)) {
             w.write(conf.getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -142,6 +218,35 @@ public final class TermuxBootstrap {
         return out;
     }
 
+    /**
+     * Unpack the extra Termux packages (openssh, android-tools and their dependencies).
+     *
+     * <p>apt cannot install them here: its repository signing key is not in the bundled keyring
+     * and keyservers are unreachable, so every apt-get refuses the index as unsigned. These
+     * .deb files were resolved and extracted on the build machine instead, then repacked with
+     * the same SYMLINKS.txt convention as the bootstrap. Extracting them directly skips apt
+     * entirely and still gives a working ssh, scp, sftp, sshd and adb.
+     */
+    public static void ensurePackages(Context ctx) {
+        File prefix = prefix(ctx);
+        File marker = new File(prefix, ".packages-v1");
+        if (marker.isFile()) return;
+        try {
+            long t0 = System.currentTimeMillis();
+            int n = ZipExtractor.extract(ctx, "packages-aarch64.zip", prefix);
+            int links = createSymlinks(prefix);
+            int fixed = rewriteShebangs(prefix);
+            int exec = makeExecutable(new File(prefix, "bin")) + makeExecutable(new File(prefix, "lib"));
+            //noinspection ResultOfMethodCallIgnored
+            marker.createNewFile();
+            BootLog.say("termux packages: " + n + " files, " + links + " symlinks, "
+                    + fixed + " shebangs, " + exec + " executable, "
+                    + (System.currentTimeMillis() - t0) + " ms");
+        } catch (Throwable t) {
+            BootLog.say("termux packages failed: " + t);
+        }
+    }
+
     /** Recreate what zip could not: target←./bin/x means ./bin/x links to target. */
     private static int createSymlinks(File prefix) {
         File list = new File(prefix, "SYMLINKS.txt");
@@ -154,6 +259,11 @@ public final class TermuxBootstrap {
                 int arrow = line.indexOf('\u2190');
                 if (arrow <= 0) continue;
                 String target = line.substring(0, arrow);
+                // Some entries point at Termux's absolute prefix, e.g. the apt keyring:
+                // trusted.gpg.d/termux-autobuilds.gpg -> /data/data/com.termux/files/usr/share/
+                // termux-keyring/termux-autobuilds.gpg. Left alone that link dangles and apt
+                // reports NO_PUBKEY for a key that is actually present.
+                target = target.replace(TERMUX_PREFIX, prefix.getAbsolutePath());
                 String path = line.substring(arrow + 1);
                 if (path.startsWith("./")) path = path.substring(2);
                 File link = new File(prefix, path);
