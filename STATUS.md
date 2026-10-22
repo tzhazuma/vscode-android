@@ -305,3 +305,36 @@ curl -L -C - -o android-app/app/src/main/assets/bootstrap-aarch64.zip \
 ```
 
 GitHub 直连会被 TUN 截断到 13.7 MB，**必须** `-C -` 断点续传。
+
+## 2026-10-22：图标终于对了（用 Mac 上 Code Insiders 的 .icns）
+
+前面两次"修好了"其实都没修好，原因值得记一下：
+
+| 尝试 | 为什么没用 |
+|---|---|
+| 只改 `mipmap-*/ic_launcher.png` | Android 8+ 用自适应图标（`mipmap-anydpi-v26`），走的是 `@drawable/ic_launcher_foreground`，mipmap 那层根本不参与 |
+| 改了 `drawable/ic_launcher_foreground` | **素材本身是错的** —— `android-ports/icons/vscode.png` 是一张纯黑单色图（中心 RGB 0,0,0），生成出来就是个黑块 |
+
+最终做法：从本机的
+`/Applications/Visual Studio Code - Insiders.app/Contents/Resources/Code - Insiders.icns`
+用 `iconutil -c iconset` 拆出 512px PNG，再生成自适应图标的前景/单色层（108dp 画布、
+图形占中间 72dp）和五个密度的 legacy 图标。
+
+真机验证：桌面 Dock 里已经是 VS Code 的蓝色标志。
+
+## Termux 里装 adb / openssh —— 卡在 apt 的硬编码路径
+
+在应用的 Termux prefix 里跑 `apt-get update` 直接失败：
+
+```
+W: Unable to read /data/data/com.termux/files/usr/etc/apt/apt.conf.d/ - DirectoryExists (13: Permission denied)
+E: Unable to determine a suitable packaging system type
+```
+
+原因：Termux 的 `apt` 在编译期就把配置目录写死成 `/data/data/com.termux/files/usr/etc/apt/`，
+不会跟随 `$PREFIX`。所以**在别的应用里用 apt 装包这条路走不通**。
+
+可行的替代：不经过 apt，直接从 Termux 仓库下载 `.deb` 并手工解包到自己 prefix
+（`ar x pkg.deb && tar xf data.tar.xz -C $PREFIX`）。Termux 的二进制是相对路径链接
+（`DT_RUNPATH=$ORIGIN/../lib`），可以搬；但**脚本**里硬编码 Termux 路径的会失效，
+用之前要检查 shebang 和内部路径。
