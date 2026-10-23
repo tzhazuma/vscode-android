@@ -41,6 +41,40 @@ public class MainActivity extends Activity {
     private static final String TAG = "VscodeAndroid";
     private TextView status;
     private WebView web;
+    private boolean seedAttempted;
+
+    /**
+     * Seed the terminal profiles into the store the workbench actually reads.
+     *
+     * <p>Written defensively on purpose: the IndexedDB schema belongs to VS Code, not to this app,
+     * so the script opens the database, walks every object store, and rewrites only string values
+     * that parse as JSON and contain a `_vscode-remote:` settings key. Anything it does not
+     * recognise is left untouched, and the whole thing is a no-op when the profiles are already
+     * present.
+     */
+    private static final String WORKBENCH_SEED_JS =
+        "(function(){try{"
+        + "var want={'terminal.integrated.defaultProfile.linux':'termux',"
+        + "'terminal.integrated.profiles.linux':{"
+        + "'termux':{path:'/data/user/0/com.vscode.android/files/usr/bin/bash',args:['--norc','-i']},"
+        + "'ubuntu':{path:'/data/user/0/com.vscode.android/files/usr/bin/ubuntu'}}};"
+        + "var open=indexedDB.open('vscode-web-db');"
+        + "open.onerror=function(){};"
+        + "open.onsuccess=function(){var db=open.result;"
+        + "try{var names=Array.from(db.objectStoreNames);"
+        + "var tx=db.transaction(names,'readwrite');"
+        + "names.forEach(function(n){var os=tx.objectStore(n);"
+        + "var req=os.openCursor();"
+        + "req.onsuccess=function(){var c=req.result;if(!c)return;"
+        + "var v=c.value;"
+        + "if(typeof v==='string'&&v.indexOf('_vscode-remote:')>=0&&v.indexOf('settings.json')>=0){"
+        + "try{var j=JSON.parse(v);var changed=false;"
+        + "Object.keys(want).forEach(function(k){if(!(k in j)){j[k]=want[k];changed=true;}});"
+        + "if(changed){c.update(JSON.stringify(j));}}catch(e){}}"
+        + "c.continue();};});"
+        + "}catch(e){}};"
+        + "}catch(e){}})();";
+
     private final Handler ui = new Handler(Looper.getMainLooper());
     private int shownGeneration = -1;
     private String loadedUrl;
@@ -104,7 +138,18 @@ public class MainActivity extends Activity {
         ws.setJavaScriptEnabled(true);
         ws.setDomStorageEnabled(true);
         ws.setAllowFileAccess(false);
-        web.setWebViewClient(new WebViewClient());
+        // The workbench keeps its user settings in the WebView's IndexedDB, not in the server's
+        // settings.json -- that file is proven ignored (User/, Machine/ and the workspace's
+        // .vscode were each written and each had no effect). Injecting into the store it does read
+        // is the only route to a terminal profile, so seed the profiles once per boot.
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                if (seedAttempted) return;
+                seedAttempted = true;
+                view.evaluateJavascript(WORKBENCH_SEED_JS, null);
+            }
+        });
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> cb,
