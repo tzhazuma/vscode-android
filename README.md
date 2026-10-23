@@ -517,3 +517,20 @@ denied`, from the app's own process, with libtalloc present, seccomp disabled, `
 and a writable PROOT_TMP_DIR), while Termux's copy works fine. So the container lives in Termux and
 `ubuntu` is the hop into it.
 
+
+## Why proot cannot live inside this APK
+
+Tested directly rather than inferred. Termux's own proot binary was streamed into this app's prefix
+over ssh (`cat $PREFIX/bin/proot`) and run here:
+
+```sh
+proot-termux -0 /system/bin/sh -c 'echo ok'
+#  the loader was not found or doesn't work
+```
+
+The same binary runs fine inside Termux. Every variant tried here fails the same way --
+`PROOT_NO_SECCOMP=1`, without `-0`, against `/system/bin/toybox` instead of sh, from the app's own
+process (not just from `run-as`), with `libtalloc.so.2` present and `PROOT_TMP_DIR` writable. So the
+difference is the process context, not the binary, and not the Ubuntu tree.
+
+That is why the container lives in Termux and `ubuntu` is an ssh hop into it.
