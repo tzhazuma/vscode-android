@@ -144,6 +144,9 @@ public class VscodeService extends Service {
             // ---- 5. start the dsh host ----
             // Before the server starts: it reads product.json once, and a gallery added
             // afterwards would never be seen by the workbench.
+            // Both must run before the server starts: it reads product.json and the user
+            // settings once, at startup.
+            TermuxBootstrap.writeTerminalProfiles(this);
             GalleryPatch.apply(this);
             BootLog.say("starting code-server (port is picked inside startWeb) ...");
             process = VscodeRuntime.startWeb(this, nld, new VscodeRuntime.Listener() {

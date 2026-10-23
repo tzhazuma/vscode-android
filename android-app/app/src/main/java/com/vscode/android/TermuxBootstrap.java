@@ -418,8 +418,12 @@ public final class TermuxBootstrap {
                 + "    }\n"
                 + "  }\n"
                 + "}\n";
+        // Never clobber an existing file: these are the user's settings once they have edited
+        // anything, and overwriting them on every boot is why earlier edits kept vanishing.
+        File settingsFile = new File(dir, "settings.json");
+        if (settingsFile.isFile()) return;
         try (java.io.FileOutputStream w = new java.io.FileOutputStream(
-                new File(dir, "settings.json"))) {
+                settingsFile)) {
             w.write(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         } catch (java.io.IOException e) {
             BootLog.say("could not write terminal profiles: " + e);
