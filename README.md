@@ -534,3 +534,28 @@ process (not just from `run-as`), with `libtalloc.so.2` present and `PROOT_TMP_D
 difference is the process context, not the binary, and not the Ubuntu tree.
 
 That is why the container lives in Termux and `ubuntu` is an ssh hop into it.
+
+## Why the terminal profile never loads: the settings file is not the source
+
+The picker lists three auto-detected `bash` entries and the terminal calls itself `bash`, no matter
+what is written where. All three plausible places were tried, each with a distinctive
+`terminal.integrated.profiles.linux` block, and each was verified to be still intact on disk after
+a restart (so nothing was being overwritten):
+
+| Location | Bytes written | Effect on the picker |
+|---|---|---|
+| `User/settings.json` | 2739 | none |
+| `Machine/settings.json` | 319 | none |
+| `<workspace>/.vscode/settings.json` | 319 | none |
+
+The server is not the variable either: its own log says
+`Using user-data-dir /data/user/0/com.vscode.android/files/.local/share/code-server`, which is
+exactly the tree being written.
+
+So the web workbench keeps its settings in browser storage -- the WebView's own localStorage /
+IndexedDB -- and the server-side files are not consulted for the user scope in this configuration.
+That is why every file-level attempt in earlier rounds had no effect, and it is also why a control
+setting (`workbench.startupEditor: none`) changed nothing.
+
+The practical consequence: the container is reached with the `ubuntu` command rather than a profile
+entry, because a command does not depend on where the workbench keeps its settings.

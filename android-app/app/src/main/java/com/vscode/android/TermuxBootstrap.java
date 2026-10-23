@@ -191,16 +191,29 @@ public final class TermuxBootstrap {
         // auto-detected bash entries and even a control setting has no effect. Rather than leave
         // the container unreachable, it is one command in the default terminal: ssh into the real
         // Termux app and log into Ubuntu through the proot-distro that works there.
+        // "ubuntu": our own proot, our own rootfs, no external app involved.
+        //
+        // proot needs its libexec/proot/loader, and the binary from the Termux repository looks
+        // for it under the *Termux* prefix -- another app's private directory, which is exactly
+        // why it failed here with execve: Permission denied. PROOT_LOADER points it at the copy
+        // inside this APK instead, and then it works (verified: the bundled proot runs
+        // /system/bin/sh, enters the unpacked Ubuntu rootfs, and apt 3.2.0 starts).
         File ubuntu = new File(prefix(ctx), "bin/ubuntu");
         String ubuntuScript = ""
-                + "#!" + p + "/bin/bash\n"
-                + "# Enter Ubuntu 26.04 by borrowing Termux's proot-distro.\n"
-                + "# A second proot inside this APK cannot execve anything on this device, so the\n"
-                + "# container lives in Termux and this is the hop into it.\n"
-                + "exec " + p + "/bin/ssh -p " + TermuxSsh.PORT
-                + " -i " + TermuxSsh.key(ctx).getAbsolutePath()
-                + " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-                + " -o LogLevel=ERROR -t 127.0.0.1 proot-distro login ubuntu\n";
+                + "#!/system/bin/sh\n"
+                + "# Enter Ubuntu 26.04 LTS using the proot and rootfs shipped in this APK.\n"
+                + "F=" + ctx.getFilesDir().getAbsolutePath() + "\n"
+                + "P=\"$F/usr\"\n"
+                + "export LD_LIBRARY_PATH=\"$P/lib\"\n"
+                + "export PROOT_TMP_DIR=\"$F/tmp\"\n"
+                + "export PROOT_LOADER=\"$P/libexec/proot/loader\"\n"
+                + "mkdir -p \"$F/tmp\"\n"
+                + "exec \"$P/bin/proot\" --link2symlink -0 -r \"$F/ubuntu\" \\\n"
+                + "  -b /dev -b /proc -b /sys -b \"$F/home\" \\\n"
+                + "  -w /root \\\n"
+                + "  /usr/bin/env -i HOME=/root TERM=\"${TERM:-xterm-256color}\" \\\n"
+                + "    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\\n"
+                + "  /bin/bash -l \"$@\"\n";
         try (java.io.FileOutputStream w = new java.io.FileOutputStream(ubuntu)) {
             w.write(ubuntuScript.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         } catch (java.io.IOException e) {
@@ -418,16 +431,29 @@ public final class TermuxBootstrap {
                 + "    }\n"
                 + "  }\n"
                 + "}\n";
-        // Never clobber an existing file: these are the user's settings once they have edited
-        // anything, and overwriting them on every boot is why earlier edits kept vanishing.
-        File settingsFile = new File(dir, "settings.json");
-        if (settingsFile.isFile()) return;
-        try (java.io.FileOutputStream w = new java.io.FileOutputStream(
-                settingsFile)) {
-            w.write(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        } catch (java.io.IOException e) {
-            BootLog.say("could not write terminal profiles: " + e);
-        }
+        // Write the same document to both scopes.
+        //
+        // terminal.integrated.profiles.* is a *machine*-scoped setting, and for the web
+        // workbench the User scope lives in the browser while the server's User/settings.json
+        // is not what the profiles are read from -- which is why writing only User/settings.json
+        // produced a picker full of auto-detected "bash" entries. Machine/settings.json is the
+        // server-side file those settings actually come from.
+        for (String scope : new String[] { "User", "Machine" })
+          {
+            File scopeDir = new File(ctx.getFilesDir(), ".local/share/code-server/" + scope);
+            //noinspection ResultOfMethodCallIgnored
+            scopeDir.mkdirs();
+            File settingsFile = new File(scopeDir, "settings.json");
+            // Never clobber an existing file: these are the user's settings once they have edited
+            // anything, and overwriting them on every boot is why earlier edits kept vanishing.
+            if (settingsFile.isFile())
+              continue;
+            try (java.io.FileOutputStream w = new java.io.FileOutputStream(settingsFile)) {
+                w.write(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            } catch (java.io.IOException e) {
+                BootLog.say("could not write terminal profiles: " + e);
+            }
+          }
     }
 
     /** The path Termux's scripts hard-code in their shebangs. */
