@@ -469,3 +469,22 @@ proot shipped inside this APK cannot execute anything — from the app's own pro
 not. Missing pieces were ruled out along the way (`libtalloc.so.2` was genuinely absent and is now
 bundled, `PROOT_NO_SECCOMP=1`, `--link2symlink`, a writable PROOT_TMP_DIR, and an explicit /lib
 bind all made no difference), so the container is borrowed rather than duplicated.
+
+## The Extensions view shows no marketplace
+
+Opening Extensions lists only "127.0.0.1 - Installed", "Browser - Installed" and "Recommended (0)".
+Searching finds nothing, because the bundle ships:
+
+```json
+"extensionsGallery": null
+```
+
+Setting it to Open VSX is necessary but, as tested here, not sufficient. `GalleryPatch` writes the
+gallery into `files/cs/lib/vscode/product.json` on every start (it must run *before* the server
+starts, since the server reads the file once), and the file does end up containing
+`https://open-vsx.org/vscode/gallery` — yet the panel still renders empty after a restart.
+
+So the product.json value is being ignored or overridden somewhere in the server's product
+configuration path. The workaround that does work is `vsix-install <publisher.name>`, which
+downloads from Open VSX directly and installs from the file; Cline and Roo Code were installed
+that way and both run.

@@ -142,6 +142,9 @@ public class VscodeService extends Service {
             BootLog.say("Termux dispatch: " + TermuxDispatch.dispatchEcho(this).trim());
 
             // ---- 5. start the dsh host ----
+            // Before the server starts: it reads product.json once, and a gallery added
+            // afterwards would never be seen by the workbench.
+            GalleryPatch.apply(this);
             BootLog.say("starting code-server (port is picked inside startWeb) ...");
             process = VscodeRuntime.startWeb(this, nld, new VscodeRuntime.Listener() {
                 @Override public void onUrl(String url) {
