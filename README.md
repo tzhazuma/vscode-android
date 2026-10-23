@@ -358,3 +358,22 @@ exposes. In the extension's settings choose "OpenAI Compatible" and enter:
 
 There is no official VS Code extension for dsh itself -- dsh is the harness, not an editor plugin
 -- so an OpenAI-compatible client like Cline is the way to drive the same models from the editor.
+
+### Installing extensions that the marketplace refuses
+
+`vsix-install` (in `$PREFIX/bin`) downloads a VSIX from Open VSX and installs it from the file,
+which is the only route that works for anything code-server rejects:
+
+```sh
+vsix-install RooVeterinaryInc.roo-cline
+# extension: RooVeterinaryInc.roo-cline 3.54.0
+# downloaded 30837353 bytes
+# Extension 'RooVeterinaryInc_roo-cline.vsix' was successfully installed.
+```
+
+Two details it handles. The download streams to disk instead of buffering, because a single
+arrayBuffer() read was being cut off on the larger extensions (Roo Code is 30 MB). And the native
+library directory comes from `files/native-lib-dir`, which the app writes at boot -- the app's own
+uid cannot glob /data/app to find its own libs, so the path has to be recorded from Java.
+
+Installed and verified this way: Cline 4.1.25, Roo Code 3.54.0.

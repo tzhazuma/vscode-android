@@ -181,6 +181,17 @@ public class VscodeService extends Service {
             // Real bash from Termux's bootstrap, unpacked into files/usr. Only possible because
             // this app targets API 28 (see TermuxBootstrap and the exec-from-data test above).
             TermuxBootstrap.ensure(this);
+            // Shell scripts inside the prefix cannot glob /data/app to find the native library
+            // directory (the app's own uid cannot scan that path), so record it once per boot.
+            try {
+                try (java.io.FileOutputStream w = new java.io.FileOutputStream(
+                        new java.io.File(getFilesDir(), "native-lib-dir"))) {
+                    w.write(getApplicationInfo().nativeLibraryDir
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+            } catch (java.io.IOException e) {
+                BootLog.say("could not record nativeLibraryDir: " + e);
+            }
             BootLog.say("nls patch: " + NlsPatch.apply(this) + " files");
             PtySelfTest.run(this);
             // Reach the *separate* Termux app over ssh: install our key there and start sshd.
