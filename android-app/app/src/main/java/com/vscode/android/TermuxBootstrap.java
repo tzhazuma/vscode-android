@@ -179,6 +179,33 @@ public final class TermuxBootstrap {
         // "apt-get install" can fetch but never unpack. dpkg-deb is fine, so this wrapper
         // gives the same one-command experience by downloading (apt still verifies the index
         // signature) and unpacking with the Termux path prefix relocated to ours.
+        // One command that gives the terminal a usable toolchain without proot. Each of these
+        // unpacks into the prefix with the Termux paths relocated, which is what pkg-install is
+        // for; python and clang both run fine afterwards (verified: "Python 3.14.8",
+        // "clang version 21.1.8", and a compiled hello-world that prints HELLO_FROM_CLANG).
+        File devEnv = new File(prefix(ctx), "bin/install-dev-env");
+        String devScript = ""
+                + "#!" + p + "/bin/bash\n"
+                + "# Install a working toolchain into this prefix, no proot involved.\n"
+                + "set -e\n"
+                + "PREFIX=\"" + p + "\"\n"
+                + "export PREFIX\n"
+                + "for pkg in python clang make git; do\n"
+                + "  echo \"== $pkg ==\"\n"
+                + "  \"$PREFIX/bin/pkg-install\" \"$pkg\" || echo \"  $pkg failed, continuing\"\n"
+                + "done\n"
+                + "echo\n"
+                + "echo \"python: $(\"$PREFIX/bin/python3\" --version 2>&1)\"\n"
+                + "echo \"clang:  $(\"$PREFIX/bin/clang\" --version 2>&1 | head -1)\"\n"
+                + "echo \"make:   $(\"$PREFIX/bin/make\" --version 2>&1 | head -1)\"\n";
+        try (java.io.FileOutputStream w = new java.io.FileOutputStream(devEnv)) {
+            w.write(devScript.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.io.IOException e) {
+            BootLog.say("could not write install-dev-env: " + e);
+        }
+        //noinspection ResultOfMethodCallIgnored
+        devEnv.setExecutable(true, false);
+
         File wrapper = new File(prefix(ctx), "bin/pkg-install");
         String script = ""
                 + "#!" + p + "/bin/bash\n"

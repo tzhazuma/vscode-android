@@ -273,3 +273,38 @@ prefix.
 | `files/usr/bin/pkg-install` | download-and-relocate installer used when dpkg cannot run |
 | `files/ssh/termux_ed25519` | the key used for the Termux ssh profile |
 | `.local/share/code-server/User/settings.json` | the terminal profiles, regenerated on every start |
+
+## A toolchain without proot
+
+The terminal is a real Termux prefix, so ordinary Termux packages work directly — no container
+needed. `pkg-install` (see above) downloads with apt and unpacks with `dpkg-deb`, relocating the
+Termux paths, which is enough for the compilers and interpreters because Termux binaries use
+relative `$ORIGIN` library paths.
+
+One command installs the common set:
+
+```sh
+install-dev-env          # python, clang, make, git
+```
+
+Verified on device from inside the prefix:
+
+```
+python: Python 3.14.8
+clang:  clang version 21.1.8
+make:   GNU Make 4.4.1
+```
+
+and a compiled program actually runs:
+
+```sh
+$ clang hello.c -o hello && ./hello
+HELLO_FROM_CLANG
+```
+
+Anything else is `pkg-install <name>`; `apt-get update` keeps the index current. What does *not*
+work is dpkg's own `--configure` step, so postinst scripts are skipped — packages that need them
+(ca-certificates does its own thing, python does not) may need a manual step.
+
+A proot container remains useful for the cases this cannot cover: software that hard-codes
+`/bin`, `/usr/lib` or a glibc-only ABI. Everything else is simpler here.
