@@ -112,7 +112,16 @@ public final class VscodeRuntime {
         // an agent writes assume `bash` exists, so without this every shell step fails with
         // "bash: not found" -- which reads to the agent as "this device has no shell" and makes it
         // give up on editing/running anything. Point SHELL and a `bash` shim at something real.
-        env.put("SHELL", ensureShim(ctx, "bash").getAbsolutePath());
+        // SHELL is what the workbench derives its default terminal profile from, and none of the
+        // settings files can supply one: User/, Machine/ and the workspace's .vscode were each
+        // written and each ignored, because the web workbench keeps its settings in the browser
+        // rather than on the server. Pointing SHELL at the container launcher is the one lever
+        // that does not depend on where settings are stored -- the terminal then opens inside
+        // Ubuntu, and plain Termux remains available by typing `bash`.
+        File ubuntuLauncher = new File(files, "usr/bin/ubuntu");
+        env.put("SHELL", ubuntuLauncher.isFile()
+                ? ubuntuLauncher.getAbsolutePath()
+                : ensureShim(ctx, "bash").getAbsolutePath());
         // Same for the other names a script may hard-code.
         ensureShim(ctx, "sh");
         // The SAF CLI needs to find filesDir without guessing: HOME is filesDir,
