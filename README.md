@@ -440,3 +440,32 @@ VS Code gets an `ubuntu` terminal profile that is the ssh hop into Termux follow
 A rootfs also lives in this app's storage (files/ubuntu, unpacked from
 ubuntu-base-26.04-base-arm64) with a launcher at `$PREFIX/bin/ubuntu`; it is kept because the
 extraction notes are worth having, but it cannot run until proot does.
+
+## What the shipped APK does out of the box
+
+Start the app and the terminal is already a working Termux userland:
+
+```
+bash 5.3   apt (update / install / remove)   PROOT_TMP_DIR set   VSIX installer
+```
+
+The heavier toolchain is one command, because bundling it would add roughly 1.5 GB to an APK that
+is already 197 MB:
+
+```sh
+install-dev-env      # python 3.14.8, clang 21.1.8, make 4.4.1, git
+```
+
+and anything else is `pkg-install <name>` — verified working for cmake 4.4.4, ninja 1.13.2,
+go 1.27.3, rust 1.99.1 (rustc + cargo) and openjdk-21 (21.0.13, javac included).
+
+### The Ubuntu profile and proot
+
+A fourth terminal profile, `ubuntu`, ssh's into the real Termux app and runs
+`proot-distro login ubuntu`, which is where Ubuntu 26.04.1 LTS actually runs on this device.
+
+proot shipped inside this APK cannot execute anything — from the app's own process it fails with
+`execve("/system/bin/sh"): Permission denied`, and the same happens from adb. Termux's copy does
+not. Missing pieces were ruled out along the way (`libtalloc.so.2` was genuinely absent and is now
+bundled, `PROOT_NO_SECCOMP=1`, `--link2symlink`, a writable PROOT_TMP_DIR, and an explicit /lib
+bind all made no difference), so the container is borrowed rather than duplicated.

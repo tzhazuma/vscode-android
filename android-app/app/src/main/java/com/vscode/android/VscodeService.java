@@ -194,6 +194,7 @@ public class VscodeService extends Service {
             }
             BootLog.say("nls patch: " + NlsPatch.apply(this) + " files");
             PtySelfTest.run(this);
+            ProotSelfTest.run(this);
             // Reach the *separate* Termux app over ssh: install our key there and start sshd.
             try {
                 String sshErr = TermuxSsh.authorise(this);
