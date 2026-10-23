@@ -308,3 +308,53 @@ work is dpkg's own `--configure` step, so postinst scripts are skipped — packa
 
 A proot container remains useful for the cases this cannot cover: software that hard-codes
 `/bin`, `/usr/lib` or a glibc-only ABI. Everything else is simpler here.
+
+## Agent extensions: what actually installs on Android
+
+code-server asks Open VSX for a build matching this platform, and several popular agents ship
+only one platform's bundle, so the marketplace path rejects them with a misleading message:
+
+```
+The 'moonshot-ai.kimi-code' extension is not available in code-server for the Web platform.
+```
+
+Checked against Open VSX directly:
+
+| Extension | Version | Target | Installable here |
+|---|---|---|---|
+| `saoudrizwan.claude-dev` (Cline) | 4.1.25 | universal | **yes — installed** |
+| `RooVeterinaryInc.roo-cline` | 3.54.0 | universal | yes |
+| `codeium.codeium` | 1.48.2 | universal | yes |
+| `moonshot-ai.kimi-code` (Kimi Code) | 0.8.3 | darwin-arm64 | no — macOS binary inside |
+| `Continue.continue` | 2.1.0 | alpine-x64 | no — wrong platform bundle |
+
+Kimi Code is real and official (also on the Microsoft marketplace as `moonshot-ai.kimi-code`), but
+its VSIX carries a macOS binary and there is no linux/Android build, so it cannot run here. The
+same is true of Continue.
+
+### Installing one that works
+
+`--install-extension <id>` is refused for platform-locked extensions, and for universal ones the
+marketplace path still goes through the same filter. Downloading the VSIX and installing from the
+file works:
+
+```sh
+# fetch the universal VSIX (node's fetch works where the bundled curl's TLS does not)
+node -e "fetch('https://open-vsx.org/api/saoudrizwan/claude-dev/4.1.25/file/saoudrizwan.claude-dev-4.1.25.vsix').then(r=>r.arrayBuffer()).then(b=>require('fs').writeFileSync(process.env.HOME+'/cline.vsix',Buffer.from(b)))"
+
+cd $FILES/cs && $NATIVE/libnode.so out/node/entry.js --install-extension ~/cline.vsix --force
+```
+
+`--list-extensions` then reports `saoudrizwan.claude-dev`.
+
+### Pointing an agent at a dsh/opencode-go endpoint
+
+Cline and Roo Code both speak the OpenAI-compatible API, which is what dsh's provider block
+exposes. In the extension's settings choose "OpenAI Compatible" and enter:
+
+- Base URL: `https://opencode.ai/zen/go/v1`
+- API key: the `OPENCODE_GO_2_API_KEY` value from the dsh profile
+- Model ID: `deepseek-v4.1-flash`
+
+There is no official VS Code extension for dsh itself -- dsh is the harness, not an editor plugin
+-- so an OpenAI-compatible client like Cline is the way to drive the same models from the editor.
