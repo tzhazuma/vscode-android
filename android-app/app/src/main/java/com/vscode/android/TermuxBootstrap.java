@@ -481,21 +481,11 @@ public final class TermuxBootstrap {
                 + "        \"TERM\": \"xterm-256color\"\n"
                 + "      }\n"
                 + "    },\n"
-                // Ubuntu 26.04 runs through proot-distro inside the real Termux app: its proot
-                // works on this device while a second copy shipped inside this APK does not (even
-                // "proot -0 /system/bin/sh" fails there), so the container is borrowed rather
-                // than duplicated. This profile is the ssh hop plus the login.
+                // Ubuntu 26.04 now runs on this APK's own proot and rootfs -- PROOT_LOADER
+                // pointed at the bundled loader is what made that work -- so the profile is the
+                // launcher script, not an ssh hop into another app.
                 + "    \"ubuntu\": {\n"
-                + "      \"path\": \"" + p + "/bin/bash\",\n"
-                + "      \"args\": [\"--norc\", \"-i\", \"-c\", \"" + sshCmd
-                + " proot-distro login ubuntu\"],\n"
-                + "      \"env\": {\n"
-                + "        \"PREFIX\": \"" + p + "\",\n"
-                + "        \"HOME\": \"" + p + "/../home\",\n"
-                + "        \"LD_LIBRARY_PATH\": \"" + p + "/lib\",\n"
-                + "        \"PATH\": \"" + p + "/bin:/system/bin\",\n"
-                + "        \"TERM\": \"xterm-256color\"\n"
-                + "      }\n"
+                + "      \"path\": \"" + p + "/bin/ubuntu\"\n"
                 + "    },\n"
                 + "    \"termux-ssh\": {\n"
                 + "      \"path\": \"" + p + "/bin/bash\",\n"
@@ -528,10 +518,25 @@ public final class TermuxBootstrap {
             //noinspection ResultOfMethodCallIgnored
             scopeDir.mkdirs();
             File settingsFile = new File(scopeDir, "settings.json");
-            // Never clobber an existing file: these are the user's settings once they have edited
-            // anything, and overwriting them on every boot is why earlier edits kept vanishing.
+            // Rewrite only when the file is missing or still carries an older ubuntu definition.
+            // These are the user's settings once they have edited anything, and clobbering them on
+            // every boot is why earlier edits kept vanishing -- but a stale profile pointing at a
+            // command this build no longer uses has to be corrected, or the picker offers a
+            // profile that cannot start.
             if (settingsFile.isFile())
-              continue;
+              {
+                try
+                  {
+                    String have = new String(java.nio.file.Files.readAllBytes (settingsFile.toPath ()),
+                                              java.nio.charset.StandardCharsets.UTF_8);
+                    if (have.contains ("usr/bin/ubuntu") && ! have.contains ("ssh -p"))
+                      continue;
+                  }
+                catch (java.io.IOException ignored)
+                  {
+                    continue;
+                  }
+              }
             try (java.io.FileOutputStream w = new java.io.FileOutputStream(settingsFile)) {
                 w.write(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             } catch (java.io.IOException e) {
