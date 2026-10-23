@@ -181,6 +181,8 @@ public class VscodeService extends Service {
             // Real bash from Termux's bootstrap, unpacked into files/usr. Only possible because
             // this app targets API 28 (see TermuxBootstrap and the exec-from-data test above).
             TermuxBootstrap.ensure(this);
+            BootLog.say("nls patch: " + NlsPatch.apply(this) + " files");
+            PtySelfTest.run(this);
             // Reach the *separate* Termux app over ssh: install our key there and start sshd.
             try {
                 String sshErr = TermuxSsh.authorise(this);

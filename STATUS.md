@@ -899,3 +899,60 @@ ptyHost was unable to resolve shell environment
 但改完后 pty host **仍然不注册 channel**，且 `ps` 显示应用只有一个 node 子进程
 （`libnode.so` 主进程），说明 pty host 的 `child_process.fork` 本身没成功、也没有报错。
 这是下一步要查的点。
+
+## 2026-10-23：VS Code 终端终于可用 —— NLS 与 platform 两个坑
+
+界面能看见之后，按 `+` 新建终端仍然只有空白的 Terminal 标签。一路挖下去是三层问题。
+
+### 第一层：pty host 被 shell shim 拖死
+
+```
+ptyHost was unable to resolve shell environment
+  spawn /data/user/0/com.vscode.android/files/bin/bash EACCES
+```
+
+`files/bin/bash` 是两行脚本，Android 10+ 拒绝 exec。已按 dsh 的方案换成
+nativeLibraryDir 里的 6 KB ELF + 符号链接。
+
+### 第二层：NLS 本地化字符串缺索引，异常直接杀死 pty host
+
+修完第一层后仍然「Unknown channel: ptyHost」。写了个自检：按 code-server 的方式
+（`child_process.fork('out/bootstrap-fork.js')` + `VSCODE_ESM_ENTRYPOINT=...ptyHostMain`）
+把 pty host 拉起来并抓它的 stderr，得到：
+
+```
+Uncaught Exception: Error: !!! NLS MISSING: 3466 !!!
+  at ptyHostMain.js
+```
+
+打开发包里的本地化查表函数，它是这样的：
+
+```js
+function Xl(r,e){let t=jl()?.[r];if(typeof t!="string"){
+  if(typeof e=="string")return e;
+  throw new Error(`!!! NLS MISSING: ${r} !!!`)}return t}
+```
+
+消息表里没有 3466 这个索引，于是**抛异常 → pty host 进程直接退出 → 通道从未注册**。
+`VSCODE_NLS=false` 没用，因为抛异常的是这个函数本身，不是加载器。
+
+修法：解包后把所有 `throw new Error(\`...NLS MISSING...\`)` 替换成 `return ""`
+（`NlsPatch`，本次命中 11 个文件）。代价是受影响的那条消息显示为空，远好于没有终端。
+
+### 第三层：Node 上报 platform=android，vscode 不认
+
+NLS 修完后 pty host 又换了报错：
+
+```
+Unhandled Promise Rejection: Error: Platform not supported
+  at ptyHostMain.js
+```
+
+vscode 只支持 linux/darwin/win32，而 `process.platform` 在 Android 上是 `android`。
+用 `--require platfix.js` 预载把 `process.platform` 定义成 `linux`；`execArgv` 会被
+fork 的子进程继承，所以 pty host 和扩展宿主都会应用这个修正。
+
+### 真机结果
+
+终端面板出现 **`bash-5.3$`** 提示符，下拉里有三个 bash profile，命令能执行并回显。
+这是移植以来终端第一次真正可用。

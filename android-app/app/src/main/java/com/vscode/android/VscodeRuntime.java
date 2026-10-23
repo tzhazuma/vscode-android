@@ -124,6 +124,13 @@ public final class VscodeRuntime {
         env.put("TERMUX_BASH", "/data/data/com.termux/files/usr/bin/bash");
         env.put("DSH_SAF_DIR", files.getAbsolutePath());
         env.put("OPENSSL_CONF", ensureOpensslConf(ctx).getAbsolutePath());
+        // The bundled nls.messages.js and the compiled code disagree: the pty host asks for
+        // message 3466, the table has no such index, and the lookup throws
+        //   Uncaught Exception: Error: !!! NLS MISSING: 3466 !!!
+        // which kills the pty host before it ever connects -- "Unknown channel: ptyHost" in the
+        // editor and no terminal at all. Turning NLS off makes the localisation helper return
+        // the key it was given instead of throwing.
+        env.put("VSCODE_NLS", "false");
     }
 
     /**
@@ -244,9 +251,21 @@ public final class VscodeRuntime {
         File bin = new File(dsh, "out/node/entry.js");
         if (!bin.isFile()) throw new IllegalStateException("dsh entry missing: " + bin);
 
+        // Node reports process.platform === "android", which the server refuses:
+        //   Error: Platform not supported   (ptyHostMain.js)
+        // Android's userland is close enough to Linux that reporting "linux" is correct for
+        // everything vscode does with it. execArgv is inherited by forked children, so the pty
+        // host and extension host get the same correction.
+        File platfix = new File(files, "platfix.js");
+        try (java.io.FileOutputStream w = new java.io.FileOutputStream(platfix)) {
+            w.write(("try { Object.defineProperty(process, 'platform', { value: 'linux' }); }"
+                    + " catch (e) {}\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Exception ignored) {
+        }
         List<String> cmd = Exec.cmd(
                 node.getAbsolutePath(),
                 "--expose-internals",
+                "--require", platfix.getAbsolutePath(),
                 bin.getAbsolutePath(),
                 "--bind-addr", "127.0.0.1:" + (webPort = pickFreePort()), "--auth", "none");
 
