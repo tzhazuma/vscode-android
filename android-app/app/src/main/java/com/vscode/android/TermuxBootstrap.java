@@ -362,6 +362,22 @@ public final class TermuxBootstrap {
                 + "        \"TERM\": \"xterm-256color\"\n"
                 + "      }\n"
                 + "    },\n"
+                // Ubuntu 26.04 runs through proot-distro inside the real Termux app: its proot
+                // works on this device while a second copy shipped inside this APK does not (even
+                // "proot -0 /system/bin/sh" fails there), so the container is borrowed rather
+                // than duplicated. This profile is the ssh hop plus the login.
+                + "    \"ubuntu\": {\n"
+                + "      \"path\": \"" + p + "/bin/bash\",\n"
+                + "      \"args\": [\"--norc\", \"-i\", \"-c\", \"" + sshCmd
+                + " proot-distro login ubuntu\"],\n"
+                + "      \"env\": {\n"
+                + "        \"PREFIX\": \"" + p + "\",\n"
+                + "        \"HOME\": \"" + p + "/../home\",\n"
+                + "        \"LD_LIBRARY_PATH\": \"" + p + "/lib\",\n"
+                + "        \"PATH\": \"" + p + "/bin:/system/bin\",\n"
+                + "        \"TERM\": \"xterm-256color\"\n"
+                + "      }\n"
+                + "    },\n"
                 + "    \"termux-ssh\": {\n"
                 + "      \"path\": \"" + p + "/bin/bash\",\n"
                 + "      \"args\": [\"--norc\", \"-i\"],\n"

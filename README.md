@@ -408,3 +408,35 @@ Tried `--link2symlink`, `PROOT_NO_SECCOMP=1`, an explicit `-b $U/usr/lib:$U/lib`
 
 So the Ubuntu container is prepared but not runnable yet. What does work for a Linux userland is
 the Termux prefix itself, which already has apt, python, clang, cmake, ninja, go, rust and java.
+
+## Ubuntu 26.04, borrowed from Termux
+
+The container ships in the real Termux app rather than inside this APK, because the two proot
+copies are not equivalent:
+
+```sh
+# a second proot installed into this app's prefix
+proot -0 /system/bin/sh -c 'echo ok'
+#   the loader was not found or doesn't work      <- no rootfs involved
+
+# the one Termux already has
+proot -0 /system/bin/sh -c 'echo ok'
+#   ok
+```
+
+Since the failure is in proot itself and not in the Ubuntu tree, the container is borrowed:
+
+```sh
+proot-distro install ubuntu        # inside Termux
+proot-distro login ubuntu -- cat /etc/os-release
+# PRETTY_NAME="Ubuntu 26.04.1 LTS"
+# VERSION_ID="26.04"
+# aarch64, uid 0
+```
+
+VS Code gets an `ubuntu` terminal profile that is the ssh hop into Termux followed by
+`proot-distro login ubuntu`, so the editor's terminal opens straight into the container.
+
+A rootfs also lives in this app's storage (files/ubuntu, unpacked from
+ubuntu-base-26.04-base-arm64) with a launcher at `$PREFIX/bin/ubuntu`; it is kept because the
+extraction notes are worth having, but it cannot run until proot does.
