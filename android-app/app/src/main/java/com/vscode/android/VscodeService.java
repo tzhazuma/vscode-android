@@ -148,6 +148,7 @@ public class VscodeService extends Service {
             // settings once, at startup.
             TermuxBootstrap.writeTerminalProfiles(this);
             GalleryPatch.apply(this);
+            TerminalProfilesPatch.apply(this);
             BootLog.say("starting code-server (port is picked inside startWeb) ...");
             process = VscodeRuntime.startWeb(this, nld, new VscodeRuntime.Listener() {
                 @Override public void onUrl(String url) {
