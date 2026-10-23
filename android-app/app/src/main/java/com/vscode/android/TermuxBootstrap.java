@@ -183,6 +183,32 @@ public final class TermuxBootstrap {
         // unpacks into the prefix with the Termux paths relocated, which is what pkg-install is
         // for; python and clang both run fine afterwards (verified: "Python 3.14.8",
         // "clang version 21.1.8", and a compiled hello-world that prints HELLO_FROM_CLANG).
+        // "ubuntu" as a command rather than a terminal profile.
+        //
+        // The profile route does not work here: writeTerminalProfiles() writes a valid five-profile
+        // settings.json to <user-data-dir>/User/settings.json (the log confirms code-server uses
+        // exactly that directory) and the workbench ignores it -- the picker lists three
+        // auto-detected bash entries and even a control setting has no effect. Rather than leave
+        // the container unreachable, it is one command in the default terminal: ssh into the real
+        // Termux app and log into Ubuntu through the proot-distro that works there.
+        File ubuntu = new File(prefix(ctx), "bin/ubuntu");
+        String ubuntuScript = ""
+                + "#!" + p + "/bin/bash\n"
+                + "# Enter Ubuntu 26.04 by borrowing Termux's proot-distro.\n"
+                + "# A second proot inside this APK cannot execve anything on this device, so the\n"
+                + "# container lives in Termux and this is the hop into it.\n"
+                + "exec " + p + "/bin/ssh -p " + TermuxSsh.PORT
+                + " -i " + TermuxSsh.key(ctx).getAbsolutePath()
+                + " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+                + " -o LogLevel=ERROR -t 127.0.0.1 proot-distro login ubuntu\n";
+        try (java.io.FileOutputStream w = new java.io.FileOutputStream(ubuntu)) {
+            w.write(ubuntuScript.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.io.IOException e) {
+            BootLog.say("could not write ubuntu launcher: " + e);
+        }
+        //noinspection ResultOfMethodCallIgnored
+        ubuntu.setExecutable(true, false);
+
         File devEnv = new File(prefix(ctx), "bin/install-dev-env");
         String devScript = ""
                 + "#!" + p + "/bin/bash\n"

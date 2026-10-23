@@ -491,22 +491,29 @@ platform grounds (Kimi Code ships darwin-arm64 only, Continue alpine-x64 only); 
 were installed that way and both run.
 
 
-## Terminal profiles are written but not applied
+## Entering Ubuntu: one command, not a profile
 
-`writeTerminalProfiles` puts five profiles into `files/.local/share/code-server/User/settings.json`
--- termux, android, termux-ssh, termux-app-ssh and ubuntu -- with `defaultProfile.linux` set to
-`termux`. Verified on the device: the file is valid JSON, contains all five, and the app rewrites
-it on every boot.
+The container is one command away in the default terminal:
 
-The workbench ignores it. The profile picker next to `+` lists three auto-detected `bash` entries
-and none of ours, and the terminal calls itself `bash` rather than `termux`. A control setting
-(`workbench.startupEditor: none`) also had no effect, so it is the whole user-settings file that is
-not being read, not just the terminal keys.
+```sh
+ubuntu
+# ssh into the real Termux app, then proot-distro login ubuntu
+# PRETTY_NAME="Ubuntu 26.04.1 LTS"
+```
 
-Two things were ruled out. The path is right (`<user-data-dir>/User/settings.json` with the default
-user-data-dir, since the server is started without `--user-data-dir`), and the JSON parses. The
-likely remaining candidates are VS Code's profile-scoped storage (a `CachedProfilesData` directory
-exists, and profiles keep their own settings.json) or the machine-scoped settings file, so the same
-profiles were also written to `Machine/settings.json` -- that variant has not been confirmed yet.
+Verified end to end from this app's prefix: the ssh hop answers `SSH_OK` and the login prints
+Ubuntu 26.04.1 LTS.
 
-Writing the profiles is not what is broken; having them read is.
+It is a command rather than a terminal profile because the profile route does not work here.
+`writeTerminalProfiles` writes a valid five-profile `settings.json` to
+`<user-data-dir>/User/settings.json` -- and the server's own log confirms that is the directory it
+uses (`Using user-data-dir /data/user/0/com.vscode.android/files/.local/share/code-server`) -- yet
+the workbench ignores the file: the picker lists three auto-detected `bash` entries, the terminal
+calls itself `bash` rather than `termux`, and a control setting (`workbench.startupEditor: none`)
+changes nothing either. The whole user-settings file goes unread, not just the terminal keys.
+
+A second proot inside this APK cannot execve on this device (`execve("/system/bin/sh"): Permission
+denied`, from the app's own process, with libtalloc present, seccomp disabled, `--link2symlink` on
+and a writable PROOT_TMP_DIR), while Termux's copy works fine. So the container lives in Termux and
+`ubuntu` is the hop into it.
+
