@@ -377,3 +377,34 @@ library directory comes from `files/native-lib-dir`, which the app writes at boo
 uid cannot glob /data/app to find its own libs, so the path has to be recorded from Java.
 
 Installed and verified this way: Cline 4.1.25, Roo Code 3.54.0.
+
+## proot Ubuntu: the rootfs works, proot does not
+
+Installed `proot` (5.1.107.98) from the Termux repo and unpacked the official
+`ubuntu-base-26.04-base-arm64` rootfs into `files/ubuntu` (25.7 MB tarball, 18 top-level entries).
+
+Three problems had to be solved just to get a usable tree, and each one is worth knowing:
+
+1. **`--no-same-permissions` strips the exec bit**, so every binary lands non-executable. Extract
+   with `--no-same-owner` only.
+2. **Hardlinks fail**: "Cannot hard link to 'usr/bin/coreutils': Permission denied". Ubuntu's
+   coreutils is a multi-call binary and every applet is a hardlink to it, so those entries become
+   zero-byte files. 114 of them had to be filled by copying `usr/bin/coreutils` over each (with a
+   `chmod` first, since they arrive mode 0000).
+3. `lib` is a symlink to `usr/lib`, and `/lib/ld-linux-aarch64.so.1` was missing entirely; it now
+   exists as a real copy of `usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1`.
+
+Even so, proot cannot run anything from inside the rootfs, and the decisive test is that it cannot
+run a plain device binary either:
+
+```sh
+proot -0 /system/bin/sh -c 'echo PROOT_BASIC_OK'
+# the loader was not found or doesn't work
+```
+
+With no rootfs involved, this isolates the failure to proot itself rather than to the Ubuntu tree.
+Tried `--link2symlink`, `PROOT_NO_SECCOMP=1`, an explicit `-b $U/usr/lib:$U/lib` bind, and a
+`PROOT_TMP_DIR` that exists and is world-writable; none changed the outcome.
+
+So the Ubuntu container is prepared but not runnable yet. What does work for a Linux userland is
+the Termux prefix itself, which already has apt, python, clang, cmake, ninja, go, rust and java.
