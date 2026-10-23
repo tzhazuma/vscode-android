@@ -490,3 +490,23 @@ extensions, so it looks empty until you search. Searching is what proves the gal
 platform grounds (Kimi Code ships darwin-arm64 only, Continue alpine-x64 only); Cline and Roo Code
 were installed that way and both run.
 
+
+## Terminal profiles are written but not applied
+
+`writeTerminalProfiles` puts five profiles into `files/.local/share/code-server/User/settings.json`
+-- termux, android, termux-ssh, termux-app-ssh and ubuntu -- with `defaultProfile.linux` set to
+`termux`. Verified on the device: the file is valid JSON, contains all five, and the app rewrites
+it on every boot.
+
+The workbench ignores it. The profile picker next to `+` lists three auto-detected `bash` entries
+and none of ours, and the terminal calls itself `bash` rather than `termux`. A control setting
+(`workbench.startupEditor: none`) also had no effect, so it is the whole user-settings file that is
+not being read, not just the terminal keys.
+
+Two things were ruled out. The path is right (`<user-data-dir>/User/settings.json` with the default
+user-data-dir, since the server is started without `--user-data-dir`), and the JSON parses. The
+likely remaining candidates are VS Code's profile-scoped storage (a `CachedProfilesData` directory
+exists, and profiles keep their own settings.json) or the machine-scoped settings file, so the same
+profiles were also written to `Machine/settings.json` -- that variant has not been confirmed yet.
+
+Writing the profiles is not what is broken; having them read is.
