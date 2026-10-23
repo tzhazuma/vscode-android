@@ -590,3 +590,25 @@ Five things had to be true, and each failed in a way that pointed somewhere else
 The hard-link problem is why the bundled rootfs is not the stock tarball: those 115 hard links are
 rewritten as absolute symlinks, which behave the same inside proot and keep the asset at 33 MB
 rather than 528 MB of duplicated coreutils.
+
+## The workbench has no settings channel this app can write
+
+For the record, because this cost several rounds and each attempt looked plausible until it was
+measured:
+
+| Where | What was written | Result |
+|---|---|---|
+| `User/settings.json` | 5 terminal profiles, verified intact after restart | ignored |
+| `Machine/settings.json` | same block | ignored |
+| `<workspace>/.vscode/settings.json` | same block | ignored |
+| all platform keys (linux/osx/windows) | same block | ignored |
+| WebView IndexedDB, `vscode-web-db` | merged into the settings record | never written: that database holds only logs and file handles (208 keys, none named settings.json) |
+| every IndexedDB on the origin | scanned all four (`vscode-web-db`, three `vscode-web-state-db-*`) | `patched=0` -- no settings record exists to patch |
+
+The injection was measured rather than assumed: the app logs the database list and the patch count,
+which is how "no settings record exists" was established instead of guessed. The seeding code and
+its extra page reload were removed afterwards; dead code that never fires is worse than none.
+
+What is left is to patch the workbench bundle itself -- the same technique that fixed the
+extensions gallery -- so the terminal profile list ships with `ubuntu` built in. That is a code
+change in `lib/vscode/out`, not a settings write, and it has not been attempted.
