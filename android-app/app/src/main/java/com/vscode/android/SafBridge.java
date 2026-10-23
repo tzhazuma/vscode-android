@@ -251,6 +251,16 @@ public final class SafBridge {
                     String body = readAll(rf);
                     String[] parts = body.split("\n", -1);
                     if (parts.length < 2) continue;
+                    // A request older than this was written by a previous session and already
+                    // answered (or abandoned). Without this the file survives, the fresh
+                    // watcher's `seen` starts at -1, and every start launches a document picker
+                    // that then sits on top of the UI -- which is exactly what hid VS Code's
+                    // terminal behind vivo's file manager.
+                    if (System.currentTimeMillis() - rf.lastModified() > 8000) {
+                        //noinspection ResultOfMethodCallIgnored
+                        rf.delete();
+                        continue;
+                    }
                     long seq = Long.parseLong(parts[0].trim());
                     final String op = parts[1].trim();
                     final String arg = parts.length > 2 ? parts[2] : "";

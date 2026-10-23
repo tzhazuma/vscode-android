@@ -857,3 +857,45 @@ name="${name%%:*}"     # 去掉 :arch
 
 剩下一条无害警告 `APT had planned for dpkg to do more than it reported back (0 vs 3)`：
 它来自 shim 只回放部分 `--status-fd` 协议，不影响结果。
+
+## 2026-10-23：终端不出现 —— 两个独立原因，修好一个半
+
+### 原因一：卡死的系统文件选择器盖住了整个界面（已修）
+
+用户反馈「GUI 里的 terminal 一直没跳出来」。真机截图显示的**根本不是 VS Code**，
+而是 vivo 的文件选择器（`com.android.filemanager/.selector.view.SelectorHomeActivity`），
+它一直盖在最上层。
+
+为什么它会反复弹出：`SafBridge` 的监视器线程在进程启动时 `seen` 从 -1 开始，
+把**上一次会话遗留的 `files/saf/req` 请求文件**当成新请求，于是每次启动都拉起选择器。
+强停文件管理器也没用 —— VS Code 一启动就又把它叫出来。
+
+修法：读取请求前先看文件年龄，超过 8 秒的直接删除并跳过（那是上一次会话的残留）。
+
+修后验证：连续观察 24 秒，前台始终是 `com.vscode.android/.MainActivity`。
+从此 VS Code 的完整界面（Explorer / Welcome / Chat / 状态栏 Pty Host）才第一次真正显示出来。
+
+### 原因二：pty host 起不来（部分修复）
+
+界面能看见之后按 `+` 新建终端，出现 Terminal 标签但内容空白，日志是：
+
+```
+[IPC Library: Pty Host] Unknown channel: ptyHost
+No ptyHost response to createProcess after 5 seconds
+Channel name 'ptyHost' timed out after 1000ms
+```
+
+往前翻日志找到更早的根因：
+
+```
+ptyHost was unable to resolve shell environment
+  Error: Unable to resolve your shell environment:
+  A system error occurred (spawn /data/user/0/com.vscode.android/files/bin/bash EACCES)
+```
+
+`files/bin/bash` 是个两行脚本 —— 和 dsh 当年完全一样的问题：Android 10+ 拒绝对应用数据目录 execve。
+已按 dsh 的方案改成 nativeLibraryDir 里的 6 KB ELF（`libbashsh.so`）+ 符号链接。
+
+但改完后 pty host **仍然不注册 channel**，且 `ps` 显示应用只有一个 node 子进程
+（`libnode.so` 主进程），说明 pty host 的 `child_process.fork` 本身没成功、也没有报错。
+这是下一步要查的点。
