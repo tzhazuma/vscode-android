@@ -39,6 +39,70 @@ public final class TermuxBootstrap {
     }
 
     /** Extract once; safe to call on every start. */
+    /**
+     * Unpack the Ubuntu rootfs shipped in the APK, once.
+     *
+     * tar does the work rather than Java on purpose: the rootfs is full of symlinks, hardlinks and
+     * mode bits (a considerable part of coreutils are hardlinks to one binary). A Java extractor
+     * silently drops all three -- an earlier hand-rolled attempt produced 114 zero-byte applets and
+     * an apt that could not read its own CPU table.
+     */
+    private static void ensureRootfs(Context ctx) {
+        File files = ctx.getFilesDir();
+        File rootfs = new File(files, "ubuntu");
+        File marker = new File(rootfs, ".unpacked-v1");
+        if (marker.isFile()) return;
+        File tarGz = new File(files, "ubuntu-rootfs.dat");
+        long t0 = System.currentTimeMillis();
+        try {
+            if (!tarGz.isFile() || tarGz.length() < 1024 * 1024) {
+                try (java.io.InputStream in = ctx.getAssets().open("ubuntu-rootfs.dat");
+                     java.io.FileOutputStream out = new java.io.FileOutputStream(tarGz)) {
+                    byte[] buf = new byte[1 << 16];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                }
+            }
+            //noinspection ResultOfMethodCallIgnored
+            rootfs.mkdirs();
+            ProcessBuilder pb = new ProcessBuilder(
+                    new File(prefix(ctx), "bin/tar").getAbsolutePath(),
+                    "xzf", tarGz.getAbsolutePath(), "-C", rootfs.getAbsolutePath(),
+                    "--no-same-owner", "--no-same-permissions");
+            pb.environment().put("LD_LIBRARY_PATH", new File(prefix(ctx), "lib").getAbsolutePath());
+            pb.environment().put("TMPDIR", new File(files, "tmp").getAbsolutePath());
+            pb.redirectErrorStream(true);
+            Process proc = pb.start();
+            StringBuilder out = new StringBuilder();
+            try (java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(proc.getInputStream()))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    if (out.length() < 400) out.append(line).append(' ');
+                }
+            }
+            int rc = proc.waitFor();
+            // tar belongs to the *host* prefix, so the guest's os-release would be left untouched;
+            // but the base image ships it with an ACL that a non-root extraction renders empty.
+            File osRelease = new File(rootfs, "etc/os-release");
+            if (osRelease.length() == 0) {
+                try (java.io.FileOutputStream w = new java.io.FileOutputStream(osRelease)) {
+                    w.write(("PRETTY_NAME=\"Ubuntu 26.04 LTS\"\nNAME=\"Ubuntu\"\n"
+                            + "VERSION_ID=\"26.04\"\nID=ubuntu\nID_LIKE=debian\n")
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+            }
+            BootLog.say("ubuntu rootfs: rc=" + rc + " in "
+                    + (System.currentTimeMillis() - t0) + " ms " + out);
+            if (rc == 0) {
+                //noinspection ResultOfMethodCallIgnored
+                marker.createNewFile();
+            }
+        } catch (Throwable t) {
+            BootLog.say("ubuntu rootfs failed: " + t);
+        }
+    }
+
     public static void ensure(Context ctx) {
         File prefix = prefix(ctx);
         File marker = new File(prefix, MARKER);
@@ -46,6 +110,7 @@ public final class TermuxBootstrap {
         // there even when the expensive unpack already happened on a previous run.
         if (marker.isFile()) {
             writeAptConfig(ctx);
+            ensureRootfs(ctx);
             File stamp = new File(prefix, ".paths-v3");
             if (!stamp.isFile()) {
                 BootLog.say("termux bootstrap: rewrote " + rewriteShebangs(prefix) + " shebangs");
@@ -65,11 +130,16 @@ public final class TermuxBootstrap {
             int fixed = rewriteShebangs(prefix);
             int exec = makeExecutable(new File(prefix, "bin"));
             exec += makeExecutable(new File(prefix, "lib"));
+            // proot execs libexec/proot/loader; without the bit it reports "the loader was not
+            // found or doesn't work", which reads like a missing file rather than a mode problem.
+            exec += makeExecutable(new File(prefix, "libexec"));
             //noinspection ResultOfMethodCallIgnored
             marker.createNewFile();
             BootLog.say("termux bootstrap: " + n + " files, " + links + " symlinks, "
                     + exec + " executable, " + fixed + " shebangs, "
                     + (System.currentTimeMillis() - t0) + " ms");
+            // First boot as well, not just the fast path above.
+            ensureRootfs(ctx);
         } catch (Throwable t) {
             BootLog.say("termux bootstrap failed: " + t);
         }
@@ -207,7 +277,11 @@ public final class TermuxBootstrap {
                 + "export LD_LIBRARY_PATH=\"$P/lib\"\n"
                 + "export PROOT_TMP_DIR=\"$F/tmp\"\n"
                 + "export PROOT_LOADER=\"$P/libexec/proot/loader\"\n"
-                + "mkdir -p \"$F/tmp\"\n"
+                + "mkdir -p \"$F/tmp\" \"$F/home\"\n"
+                // The unpack does not always keep the exec bit on libexec/proot/loader (it comes
+                // out 600), and proot then reports "the loader was not found or doesn't work",
+                // which reads like a missing file. Cheap to guarantee here.
+                + "chmod 755 \"$P/libexec/proot/loader\" \"$P/libexec/proot/loader32\" 2>/dev/null\n"
                 + "exec \"$P/bin/proot\" --link2symlink -0 -r \"$F/ubuntu\" \\\n"
                 + "  -b /dev -b /proc -b /sys -b \"$F/home\" \\\n"
                 + "  -w /root \\\n"
@@ -300,7 +374,7 @@ public final class TermuxBootstrap {
      */
     public static void ensurePackages(Context ctx) {
         File prefix = prefix(ctx);
-        File marker = new File(prefix, ".packages-v1");
+        File marker = new File(prefix, ".packages-v2");
         if (marker.isFile()) return;
         try {
             long t0 = System.currentTimeMillis();
@@ -438,6 +512,10 @@ public final class TermuxBootstrap {
         // is not what the profiles are read from -- which is why writing only User/settings.json
         // produced a picker full of auto-detected "bash" entries. Machine/settings.json is the
         // server-side file those settings actually come from.
+        File homeDir = new File(ctx.getFilesDir(), "home");
+        //noinspection ResultOfMethodCallIgnored
+        homeDir.mkdirs();
+
         for (String scope : new String[] { "User", "Machine" })
           {
             File scopeDir = new File(ctx.getFilesDir(), ".local/share/code-server/" + scope);
