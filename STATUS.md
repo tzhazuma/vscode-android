@@ -822,3 +822,38 @@ apt 报 `APT had planned for dpkg to do more than it reported back (0 vs 3)`，
 
 - `--unpack --auto-deconfigure <deb>`：原实现遇到 `--auto-deconfigure` 就 break，**根本没解包**；
 - `--status-fd 1` 的 `1` 被当成包名传给 `remove_one`（报了 `status: remove 1`）。
+
+## 2026-10-23：apt-get remove 修好了 —— 是架构后缀
+
+抓到 apt 真正传给 dpkg 的参数：
+
+```
+--status-fd 14 --no-triggers --force-depends --abort-after=1 --remove tree:aarch64
+```
+
+注意最后那个 **`tree:aarch64`** —— apt 传的包名**带架构后缀**，而 dpkg 自己的清单文件
+（`var/lib/dpkg/info/tree.list`）和状态记录用的是裸名 `tree`。
+名字对不上，于是 `remove_one` 既找不到清单、也匹配不到状态段落，什么都没删，
+却也不报错，所以表面上只是「apt 说卸载了但文件还在」。
+
+修法一行：
+
+```sh
+name="${name%%:*}"     # 去掉 :arch
+```
+
+`configure_one` 同样处理。
+
+### 真机验证完整循环
+
+```
+1 install  : present
+2 remove   : gone
+3 reinstall: present   →  tree v2.3.2 © 1996-2026 by Steve Baker...
+4 remove   : gone
+```
+
+**现在 apt 的 update / install / remove 全部可用。**
+
+剩下一条无害警告 `APT had planned for dpkg to do more than it reported back (0 vs 3)`：
+它来自 shim 只回放部分 `--status-fd` 协议，不影响结果。
