@@ -559,3 +559,34 @@ setting (`workbench.startupEditor: none`) changed nothing.
 
 The practical consequence: the container is reached with the `ubuntu` command rather than a profile
 entry, because a command does not depend on where the workbench keeps its settings.
+
+## The container is inside the APK
+
+`ubuntu` needs nothing from outside this app:
+
+```
+$ ubuntu -c 'cat /etc/os-release | head -2; id -u; uname -m; apt-get --version | head -1'
+PRETTY_NAME="Ubuntu 26.04 LTS"
+NAME="Ubuntu"
+0
+aarch64
+apt 3.2.0 (arm64)
+```
+
+Verified from a wiped install: the first boot logs `ubuntu rootfs: rc=0`, then the command above
+runs on this APK's own proot against the rootfs it unpacked itself. Termux does not have to be
+installed, and the old ssh hop into it is gone.
+
+Five things had to be true, and each failed in a way that pointed somewhere else:
+
+| Symptom | Real cause |
+|---|---|
+| dynamic loader refuses proot | it also needs `libandroid-shmem.so`, not just libtalloc |
+| "the loader was not found" | `libexec/proot/loader` extracts mode 600; the launcher chmods it |
+| "Cannot hard link to 'usr/bin/coreutils'" | **this ROM refuses hard links in app data**, even between two files the app just made; the base image has 115 of them |
+| APK grew to 316 MB | aapt2 decompresses assets whose name ends in `.gz`; the asset is named `.dat` and marked noCompress |
+| unpack had no tools | `tar` and `gzip` now ride along in the packages archive |
+
+The hard-link problem is why the bundled rootfs is not the stock tarball: those 115 hard links are
+rewritten as absolute symlinks, which behave the same inside proot and keep the asset at 33 MB
+rather than 528 MB of duplicated coreutils.
