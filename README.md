@@ -470,21 +470,23 @@ not. Missing pieces were ruled out along the way (`libtalloc.so.2` was genuinely
 bundled, `PROOT_NO_SECCOMP=1`, `--link2symlink`, a writable PROOT_TMP_DIR, and an explicit /lib
 bind all made no difference), so the container is borrowed rather than duplicated.
 
-## The Extensions view shows no marketplace
+## The Extensions marketplace works
 
-Opening Extensions lists only "127.0.0.1 - Installed", "Browser - Installed" and "Recommended (0)".
-Searching finds nothing, because the bundle ships:
+The bundle ships `extensionsGallery: null`, so the gallery had to be supplied: `GalleryPatch`
+writes the Open VSX gallery into `files/cs/lib/vscode/product.json` on every start, and it has to
+run *before* the server starts because the server reads that file once.
 
-```json
-"extensionsGallery": null
-```
+With that in place the Extensions view is a real marketplace. Verified on the device:
 
-Setting it to Open VSX is necessary but, as tested here, not sufficient. `GalleryPatch` writes the
-gallery into `files/cs/lib/vscode/product.json` on every start (it must run *before* the server
-starts, since the server reads the file once), and the file does end up containing
-`https://open-vsx.org/vscode/gallery` — yet the panel still renders empty after a restart.
+- searching `python` returns the full catalogue (ms-python 45M installs, debugpy 62.4M, ...)
+- installing `ms-python.vscode-python-envs` from the GUI completed and reappeared under Installed
+- the publisher-trust dialog appears as it should
 
-So the product.json value is being ignored or overridden somewhere in the server's product
-configuration path. The workaround that does work is `vsix-install <publisher.name>`, which
-downloads from Open VSX directly and installs from the file; Cline and Roo Code were installed
-that way and both run.
+One correction worth recording: an earlier note in this file claimed the panel was empty and the
+marketplace unusable. That was wrong -- the default view only lists installed and recommended
+extensions, so it looks empty until you search. Searching is what proves the gallery is live.
+
+`vsix-install <publisher.name>` still exists for the extensions the marketplace refuses on
+platform grounds (Kimi Code ships darwin-arm64 only, Continue alpine-x64 only); Cline and Roo Code
+were installed that way and both run.
+
