@@ -282,6 +282,12 @@ public final class TermuxBootstrap {
                 // out 600), and proot then reports "the loader was not found or doesn't work",
                 // which reads like a missing file. Cheap to guarantee here.
                 + "chmod 755 \"$P/libexec/proot/loader\" \"$P/libexec/proot/loader32\" 2>/dev/null\n"
+                // Android has no /etc/resolv.conf, so the guest starts without DNS and apt reports
+                // every source as "Ign:" with no other clue. Write one if the guest has none.
+                + "if [ ! -s \"$F/ubuntu/etc/resolv.conf\" ]; then\n"
+                + "  printf 'nameserver 223.5.5.5\\nnameserver 119.29.29.29\\nnameserver 8.8.8.8\\n' > \"$F/ubuntu/etc/resolv.conf\"\n"
+                + "  chmod 644 \"$F/ubuntu/etc/resolv.conf\"\n"
+                + "fi\n"
                 + "exec \"$P/bin/proot\" --link2symlink -0 -r \"$F/ubuntu\" \\\n"
                 + "  -b /dev -b /proc -b /sys -b \"$F/home\" \\\n"
                 + "  -w /root \\\n"
