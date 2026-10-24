@@ -162,8 +162,15 @@ public class MainActivity extends Activity {
         + "s.textContent='"
         + ".titlebar-drag-region{pointer-events:none !important}"
         + ".monaco-workbench .part.titlebar .titlebar-drag-region{pointer-events:none !important}"
-        + ".terminal-actions .action-label.codicon-chevron-down{"
-        + "min-width:26px !important;justify-content:center;position:relative;z-index:5}"
+        // The chevron sits inside .monaco-dropdown-with-primary, not .terminal-actions -- the
+        // first selector matched nothing, so the button stayed 16 px wide and went on overlapping
+        // the `+` beside it.
+        + ".monaco-dropdown-with-primary .dropdown-action-container "
+        + ".action-label.codicon-chevron-down{"
+        + "min-width:24px !important;justify-content:center;position:relative;z-index:5}"
+        // A taller command centre so a finger aimed at the search box does not land in the empty
+        // margin above it and hit nothing.
+        + ".part.titlebar .command-center{min-height:28px !important}"
         + "';"
         + "document.head.appendChild(s);"
         + "}catch(e){}})();";

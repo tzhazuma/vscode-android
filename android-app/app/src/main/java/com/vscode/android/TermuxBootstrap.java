@@ -110,6 +110,7 @@ public final class TermuxBootstrap {
         // there even when the expensive unpack already happened on a previous run.
         if (marker.isFile()) {
             writeAptConfig(ctx);
+            installSetupScript(ctx);
             ensureRootfs(ctx);
             File stamp = new File(prefix, ".paths-v3");
             if (!stamp.isFile()) {
@@ -244,7 +245,7 @@ public final class TermuxBootstrap {
                 + "Acquire::AllowInsecureRepositories \"true\";\n";
         installDpkgShim(ctx);
         fixPkgCachePath(ctx);
-        pinMirror(ctx);
+        unpinMirror(ctx);
         writeTerminalProfiles(ctx);
         int repaired = repairKeyringLinks(prefix(ctx));
         if (repaired > 0) {
@@ -400,6 +401,32 @@ public final class TermuxBootstrap {
      * the same SYMLINKS.txt convention as the bootstrap. Extracting them directly skips apt
      * entirely and still gives a working ssh, scp, sftp, sshd and adb.
      */
+
+    /**
+     * Put the one-click setup script where the user can run it.
+     *
+     * The APK carries the container and the package manager but not the developer toolchain: that
+     * would add hundreds of megabytes to every download for something installed once. {@code setup}
+     * does what is left, and is safe to re-run.
+     */
+    private static void installSetupScript(Context ctx) {
+        File target = new File(new File(prefix(ctx), "bin"), "setup");
+        try (java.io.InputStream in = ctx.getAssets().open("setup.sh")) {
+            java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+            byte[] chunk = new byte[8192];
+            int n;
+            while ((n = in.read(chunk)) > 0) buf.write(chunk, 0, n);
+            byte[] body = buf.toByteArray();
+            if (target.isFile() && target.length() == body.length) return;
+            java.nio.file.Files.write(target.toPath(), body);
+            //noinspection ResultOfMethodCallIgnored
+            target.setExecutable(true, false);
+            BootLog.say("setup script installed at " + target);
+        } catch (IOException e) {
+            BootLog.say("setup script: " + e);
+        }
+    }
+
     public static void ensurePackages(Context ctx) {
         File prefix = prefix(ctx);
         File marker = new File(prefix, ".packages-v2");
@@ -953,8 +980,6 @@ public final class TermuxBootstrap {
                 + "exit $rc\n";
     }
 
-    /** The mirror pkg should use; the automatic choice was a Swedish host that times out here. */
-    private static final String PKG_MIRROR = "https://mirrors.cernet.edu.cn/termux/apt/termux-main";
 
     /**
      * Make Termux's pkg stat this prefix's apt cache, and keep it off the mirror lottery.
@@ -994,55 +1019,31 @@ public final class TermuxBootstrap {
     }
 
     /**
-     * Pin pkg and apt to one mirror.
+     * Undo an earlier pin, so pkg tests mirrors again.
      *
-     * <p>Even with the cache path fixed, a cache older than six hours sends pkg through the
-     * weighted random pick again, and on this network that selected a host that times out. Two
-     * files make the choice deterministic: chosen_mirrors, which pkg's select_mirror() reads
-     * before scanning the mirror tree (a symlink to the cernet definition, the shape
-     * termux-change-repo writes), and sources.list, which apt itself reads.
+     * <p>An earlier build of this app pinned the mirror: it wrote {@code chosen_mirrors} as a
+     * symlink to one host and forced {@code sources.list} to match. That made the six-hour cache
+     * check moot -- {@code select_mirror()} reads {@code chosen_mirrors} first and returns, so the
+     * sweep never ran at all, and a host that worked one week could be dead the next with nothing
+     * to fall back to.
+     *
+     * <p>With the cache path fixed ({@link #fixPkgCachePath}) the intended behaviour works: a cold
+     * or stale cache sweeps every mirror and picks by measured speed, and a cache younger than six
+     * hours just re-checks the current one. Removing the symlink is what restores that, so this
+     * deletes a pin this app created and leaves a user's own mirror group alone.
      */
-    private static void pinMirror(Context ctx) {
+    private static void unpinMirror(Context ctx) {
         File prefix = prefix(ctx);
-        File mirror = new File(prefix, "etc/termux/mirrors/chinese_mainland/mirrors.cernet.edu.cn");
         File chosen = new File(prefix, "etc/termux/chosen_mirrors");
         try {
-            if (!mirror.isFile()) return;
-            boolean pinned = java.nio.file.Files.isSymbolicLink(chosen.toPath())
-                    && java.nio.file.Files.readSymbolicLink(chosen.toPath()).toString()
-                            .equals(mirror.getAbsolutePath());
-            if (!pinned) {
-                // A symlink left by an earlier run (or a hand edit) points somewhere else; drop
-                // it so the link can be replaced. Directories are a user's mirror group and are
-                // left alone.
-                if (java.nio.file.Files.isSymbolicLink(chosen.toPath()) || chosen.isFile()) {
-                    java.nio.file.Files.deleteIfExists(chosen.toPath());
-                }
-                if (!chosen.exists()) {
-                    android.system.Os.symlink(mirror.getAbsolutePath(), chosen.getAbsolutePath());
-                    BootLog.say("pkg: pinned the mirror to " + PKG_MIRROR);
-                }
-            }
+            if (!java.nio.file.Files.isSymbolicLink(chosen.toPath())) return;
+            java.nio.file.Path target = java.nio.file.Files.readSymbolicLink(chosen.toPath());
+            // Only a link into this prefix's own mirror tree is ours to remove.
+            if (!target.toString().startsWith(prefix.getAbsolutePath())) return;
+            java.nio.file.Files.deleteIfExists(chosen.toPath());
+            BootLog.say("pkg: removed a pinned mirror so pkg tests them again");
         } catch (Throwable e) {
-            BootLog.say("pkg: could not pin chosen_mirrors: " + e);
-        }
-        File sources = new File(prefix, "etc/apt/sources.list");
-        String want = "# The main termux repository\n"
-                + "deb " + PKG_MIRROR + " stable main\n";
-        try {
-            String have = sources.isFile()
-                    ? new String(java.nio.file.Files.readAllBytes(sources.toPath()),
-                            java.nio.charset.StandardCharsets.UTF_8) : "";
-            // Only when it is not already ours: rewriting always would bump the mtime that
-            // pkg's update_apt_cache() compares against pkgcache.bin.
-            if (!have.contains(PKG_MIRROR)) {
-                try (java.io.FileOutputStream w = new java.io.FileOutputStream(sources)) {
-                    w.write(want.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                }
-                BootLog.say("apt: sources.list pinned to " + PKG_MIRROR);
-            }
-        } catch (IOException e) {
-            BootLog.say("apt: could not pin sources.list: " + e);
+            BootLog.say("pkg: could not clear the pinned mirror: " + e);
         }
     }
 
