@@ -101,7 +101,13 @@ public final class VscodeRuntime {
      */
     public static void applyEnv(java.util.Map<String, String> env, Context ctx) {
         File files = ctx.getFilesDir();
-        env.put("LD_LIBRARY_PATH", rtDir(ctx).getAbsolutePath());
+        // Two directories, not one. rtDir holds libnode's dependencies; the container prefix holds
+        // libpython, libclang and the rest. Listing only rtDir is why the Python extension reported
+        // the bundled interpreter as "invalid": it forks the interpreter from this server process,
+        // which then could not resolve libpython.so.
+        java.io.File prefixLib = new java.io.File(new java.io.File(files, "usr"), "lib");
+        env.put("LD_LIBRARY_PATH", rtDir(ctx).getAbsolutePath()
+                + (prefixLib.isDirectory() ? ":" + prefixLib.getAbsolutePath() : ""));
         env.put("HOME", files.getAbsolutePath());
         env.put("TMPDIR", files.getAbsolutePath());
         // filesDir/bin holds the `saf` command (the SAF contract, usable from

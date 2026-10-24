@@ -309,7 +309,7 @@ public final class TermuxBootstrap {
                 + "set -e\n"
                 + "PREFIX=\"" + p + "\"\n"
                 + "export PREFIX\n"
-                + "for pkg in python clang make git golang rust openjdk-17 openssh android-tools; do\n"
+                + "for pkg in python clang make git golang rust openjdk-17 openssh android-tools sshpass; do\n"
                 + "  echo \"== $pkg ==\"\n"
                 + "  \"$PREFIX/bin/pkg-install\" \"$pkg\" || echo \"  $pkg failed, continuing\"\n"
                 + "done\n"
@@ -499,17 +499,18 @@ public final class TermuxBootstrap {
                 + "    \"ubuntu\": {\n"
                 + "      \"path\": \"" + p + "/bin/ubuntu\"\n"
                 + "    },\n"
-                + "    \"termux-ssh\": {\n"
-                + "      \"path\": \"" + p + "/bin/bash\",\n"
-                + "      \"args\": [\"--norc\", \"-i\"],\n"
-                + "      \"env\": {\n"
-                + "        \"PREFIX\": \"" + p + "\",\n"
-                + "        \"HOME\": \"" + p + "/../home\",\n"
-                + "        \"LD_LIBRARY_PATH\": \"" + p + "/lib\",\n"
-                + "        \"PATH\": \"" + p + "/bin:/system/bin\",\n"
-                + "        \"APT_CONFIG\": \"" + p + "/etc/apt/apt.conf\",\n"
-                + "        \"TERM\": \"xterm-256color\"\n"
-                + "      }\n"
+                // Shell straight into the Ubuntu the standalone Termux app carries, rather than a
+                // second copy here: sshd there listens on 8022 and `proot-distro login ubuntu`
+                // drops into the container. sshpass supplies the password, because an ssh prompt
+                // cannot be answered from a profile.
+                + "    \"termux-app-ssh-ubuntu\": {\n"
+                + "      \"path\": \"" + p + "/bin/sshpass\",\n"
+                + "      \"args\": [\"-p\", \"20030120\", \"ssh\", \"-p\", \"8022\",\n"
+                + "                 \"-o\", \"StrictHostKeyChecking=no\",\n"
+                + "                 \"-o\", \"UserKnownHostsFile=/dev/null\",\n"
+                + "                 \"-o\", \"LogLevel=ERROR\",\n"
+                + "                 \"-t\", \"root@127.0.0.1\", \"proot-distro login ubuntu\"],\n"
+                + "      \"env\": { \"TERM\": \"xterm-256color\" }\n"
                 + "    }\n"
                 + "  }\n"
                 + "}\n";
