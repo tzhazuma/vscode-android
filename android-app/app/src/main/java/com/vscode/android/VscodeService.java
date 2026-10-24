@@ -126,6 +126,12 @@ public class VscodeService extends Service {
                 long t0 = System.currentTimeMillis();
                 int n = ZipExtractor.extract(this, "cs-bundle.zip", dsh);
                 BootLog.say("extracted " + n + " files in " + (System.currentTimeMillis() - t0) + " ms");
+                // A zip entry carries no Unix mode that Android's extractor preserves, so every
+                // helper that needs to be executable comes out mode 600. ripgrep was the visible
+                // casualty ("spawn .../rg EACCES"), which breaks search and anything that shells
+                // out to it; the rest are node helpers under node_modules/**/bin.
+                int fixed = ExecutableBits.restore(dsh);
+                BootLog.say("restored executable bits on " + fixed + " helpers");
                 //noinspection ResultOfMethodCallIgnored
                 marker.createNewFile();
             } else {
