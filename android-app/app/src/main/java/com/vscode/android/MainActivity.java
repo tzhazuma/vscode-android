@@ -195,6 +195,27 @@ public class MainActivity extends Activity {
         + ".part.titlebar .command-center .command-center-quick-pick{visibility:visible !important}"
         + "';"
         + "document.head.appendChild(s);"
+        // Separate the terminal's `+` from its chevron.
+        //
+        // They are 22 px and 24 px wide and sit flush against each other: measured on the device,
+        // `+` spans 933..955 and the chevron starts at 952. A finger is about 9 mm, so tapping the
+        // chevron reliably lands on `+` -- which is why "clicking the arrow" kept creating a bash
+        // terminal instead of opening its menu. Selector-scoped CSS kept matching the Agent Status
+        // pill instead (it is a .monaco-dropdown-with-primary too), so this finds the terminal's
+        // own group by the `+` it contains and spaces it out, repeating because the workbench
+        // rebuilds that toolbar on every layout change.
+        + "if(!window.__dshTermGap){window.__dshTermGap=1;"
+        + "var fix=function(){"
+        + "var groups=document.querySelectorAll('.monaco-dropdown-with-primary');"
+        + "for(var i=0;i<groups.length;i++){"
+        + "var plus=groups[i].querySelector('.action-label.codicon-plus');if(!plus)continue;"
+        + "var drop=groups[i].querySelector('.dropdown-action-container');if(!drop)continue;"
+        + "drop.style.marginLeft='14px';"
+        + "var chev=drop.querySelector('.action-label');"
+        + "if(chev){chev.style.minWidth='32px';chev.style.minHeight='26px';}"
+        + "plus.style.minWidth='32px';plus.style.minHeight='26px';"
+        + "}};"
+        + "setInterval(fix,1500);fix();}"
         // Deliberately no synthetic-click handler here.
         //
         // One was tried: a capture-phase listener that forwarded any title-strip click to
