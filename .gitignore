@@ -6,6 +6,9 @@ android-app/local.properties
 
 # Packaged inputs: reproducible (BUILD.md + the scripts in this repo regenerate them)
 android-app/app/src/main/assets/
+# Except the scripts that are source: the directory is ignored because it also
+# holds the multi-hundred-megabyte bundle and rootfs payloads.
+!android-app/app/src/main/assets/setup.sh
 android-app/app/src/main/jniLibs/
 
 # Cloned upstream sources

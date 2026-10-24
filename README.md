@@ -648,3 +648,36 @@ VS Code has the same check and the same code path, but on this device it reports
 rejects the `MANAGE_EXTERNAL_STORAGE` appop for its package (a `rejectTime` is recorded), so the
 switch has to be turned on by hand in Settings → Apps → VS Code → Special app access → All files
 access. The app opens that screen on launch when the permission is missing.
+
+## First start
+
+The APK carries the container and the package manager, not the developer toolchain: that would add
+hundreds of megabytes to every download for something installed once. On the first start after a
+fresh install, the app runs `$PREFIX/bin/setup all` in the background (log at
+`files/setup-first-run.log`) and records `.setup-done`:
+
+- **shell** — zsh, oh-my-zsh, and the autosuggestions / syntax-highlighting / completions plugins
+- **dev** — python, clang, make, git, go, rust, java, openssh, adb (java needs symlinks out of
+  `lib/jvm`, because openjdk's post-install script is not run here)
+- **brew** — Linuxbrew inside the Ubuntu container, behind the installer's own container check
+- **opencode** — the CLI inside the container plus a wrapper, because opencode has no Android build
+
+Run `setup all` again any time; every step checks before acting. `setup shell`, `setup dev`,
+`setup brew` and `setup opencode` run one group each.
+
+Nothing here is in the APK, so a package clear or a fresh install starts from nothing and relies on
+that first-run pass. If it fails (no network, for instance) run `setup all` by hand — the log says
+which step failed.
+
+## Known device quirks
+
+- `uiautomator dump` returns `ERROR: null root node returned by UiTestAutomationBridge` while the
+  vivo installer dialog is up, so the usual "read bounds from a dump" cannot be used to drive an
+  install. The dialog can be driven from a screenshot instead: the checkbox is a 45x45 grey square
+  (`y=1748` with the 身份验证 footer, `y=1809` without, `x=1304`) and 继续安装 is the blue button
+  (RGB 39,133,255). The dialog goes inert the moment its `pm install` client is killed, so the
+  install and the taps have to stay in one live shell.
+- Screenshots go stale for apps that draw through a SurfaceView (the ArtCraft launcher). Prefer
+  `uiautomator`, `dumpsys`, `run-as` file reads and `pm`/`am` state.
+- `run-as` runs in the restricted `runas_app` domain: it can execute the prefix binaries but cannot
+  read `/sdcard`, so it must never be used to test storage access.

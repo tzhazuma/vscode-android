@@ -111,6 +111,7 @@ public final class TermuxBootstrap {
         if (marker.isFile()) {
             writeAptConfig(ctx);
             installSetupScript(ctx);
+            autoSetupOnFirstRun(ctx);
             ensureRootfs(ctx);
             File stamp = new File(prefix, ".paths-v3");
             if (!stamp.isFile()) {
@@ -409,6 +410,33 @@ public final class TermuxBootstrap {
      * would add hundreds of megabytes to every download for something installed once. {@code setup}
      * does what is left, and is safe to re-run.
      */
+/**
+     * Run the one-click setup the first time the app starts with a usable prefix.
+     *
+     * The toolchains are not in the APK (they would add hundreds of megabytes for something
+     * installed once), so a fresh install has a container with no zsh, no compiler and no brew.
+     * Rather than make the user find `setup`, this runs it once in the background and records that
+     * it did. It is deliberately detached: `setup all` downloads for minutes, and the workbench
+     * must not wait for it.
+     */
+    private static void autoSetupOnFirstRun(Context ctx) {
+        File stamp = new File(prefix(ctx), ".setup-done");
+        File setup = new File(new File(prefix(ctx), "bin"), "setup");
+        if (stamp.isFile() || !setup.isFile()) return;
+        try {
+            ProcessBuilder pb = new ProcessBuilder(setup.getAbsolutePath(), "all");
+            pb.redirectErrorStream(true);
+            pb.redirectOutput(ProcessBuilder.Redirect.appendTo(
+                    new File(ctx.getFilesDir(), "setup-first-run.log")));
+            pb.start();
+            //noinspection ResultOfMethodCallIgnored
+            stamp.createNewFile();
+            BootLog.say("first run: setup started in the background (see setup-first-run.log)");
+        } catch (Exception e) {
+            BootLog.say("first run: could not start setup: " + e);
+        }
+    }
+
     private static void installSetupScript(Context ctx) {
         File target = new File(new File(prefix(ctx), "bin"), "setup");
         try (java.io.InputStream in = ctx.getAssets().open("setup.sh")) {
