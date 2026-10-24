@@ -20,8 +20,11 @@ import java.io.OutputStream;
  * <p>The checked-in binary is a real build of
  * {@code github.com/microsoft/python-environment-tools} (v2024.16.0) for
  * {@code aarch64-linux-android}, built with the NDK; see {@code prebuilt/BUILD.md}. It is copied
- * into every installed copy of either Python extension at boot. If a future VSIX ever ships its
- * own {@code pet}, the existing executable is left alone: this only fills in a missing file.
+ * into every installed copy of either Python extension at boot, and a lightweight watcher keeps
+ * checking afterwards: installing the extension from the gallery happens while the app is
+ * already running, and without the watcher that new copy would have no pet until the next app
+ * start. If a future VSIX ever ships its own {@code pet}, the existing executable is left alone:
+ * this only fills in a missing file.
  */
 final class PetPatch {
 
@@ -30,7 +33,40 @@ final class PetPatch {
             "ms-python.python-"
     };
 
+    /** How often the watcher looks for a Python extension that was just installed. */
+    private static final long WATCH_INTERVAL_MS = 5000;
+
+    private static volatile Thread watcher;
+
     private PetPatch() { }
+
+    /**
+     * Copy pet into any Python extension that lacks it, then keep watching for extensions
+     * installed later. Idempotent: only one watcher is ever started per process.
+     */
+    static synchronized void watch(Context ctx) {
+        if (watcher != null) return;
+        final Context app = ctx.getApplicationContext();
+        // Synchronous first pass: this runs before the extension host starts, so an extension
+        // that is already installed can resolve pet on its first lookup.
+        apply(app);
+        Thread t = new Thread(() -> {
+            while (true) {
+                try {
+                    Thread.sleep(WATCH_INTERVAL_MS);
+                    apply(app);
+                } catch (InterruptedException e) {
+                    return;
+                } catch (Throwable t2) {
+                    // Never let a transient filesystem error kill the watcher.
+                    BootLog.say("pet: watcher error: " + t2);
+                }
+            }
+        }, "pet-watch");
+        t.setDaemon(true);
+        watcher = t;
+        t.start();
+    }
 
     static void apply(Context ctx) {
         File extRoot = new File(new File(ctx.getFilesDir(), ".local/share/code-server"),

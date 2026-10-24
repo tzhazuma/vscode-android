@@ -156,8 +156,9 @@ public class VscodeService extends Service {
             GalleryPatch.apply(this);
             TerminalProfilesPatch.apply(this);
             // Must be in place before the extension host can resolve an interpreter: the universal
-            // vscode-python-envs VSIX has no platform binaries, so pet comes from res/raw/pet.
-            PetPatch.apply(this);
+            // vscode-python-envs VSIX has no platform binaries, so pet comes from res/raw/pet. The
+            // watcher also covers an extension installed from the gallery while the app is running.
+            PetPatch.watch(this);
             BootLog.say("starting code-server (port is picked inside startWeb) ...");
             process = VscodeRuntime.startWeb(this, nld, new VscodeRuntime.Listener() {
                 @Override public void onUrl(String url) {
