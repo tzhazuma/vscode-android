@@ -171,9 +171,34 @@ public class MainActivity extends Activity {
         // A taller command centre so a finger aimed at the search box does not land in the empty
         // margin above it and hit nothing.
         + ".part.titlebar .command-center{min-height:28px !important}"
+        // The Agent Status extension puts a pill in the title bar that physically covers the
+        // command centre: measured, the pill is 410,4 471x24 and the command centre 358,4 523x28,
+        // so the pill sits on top of the right three quarters of the search box and
+        // elementFromPoint over the box returns `agent-status-label`, not the box. Every tap there
+        // went to the extension, which is why "the search bar does nothing" survived the earlier
+        // fixes and why it came and went: it only fails once that extension has loaded.
+        + ".agent-status-container,.agent-status-pill,.agent-status-label,"
+        + ".agent-status-input-area{pointer-events:none !important}"
+        // The real reason the search bar "did nothing": in compact mode the whole command centre is
+        // laid out at 523x28 but with visibility:hidden, its carrier .command-center-center set to
+        // display:none, and the quick-pick item hidden too. So the white strip is the title bar
+        // background, not an input -- there was nothing to type into, and elementFromPoint over it
+        // returned the bar, never an input. Shown and given a width, the same point resolves to
+        // `input`, and a real tap on it opens the palette (verified on the device).
+        + ".part.titlebar .command-center{visibility:visible !important}"
+        + ".part.titlebar .command-center .command-center-center{display:block !important;"
+        + "visibility:visible !important;width:320px !important;min-width:200px !important}"
+        + ".part.titlebar .command-center .command-center-quick-pick{visibility:visible !important}"
         + "';"
         + "document.head.appendChild(s);"
-        + "}catch(e){}})();";
+        // Deliberately no synthetic-click handler here.
+        //
+        // One was tried: a capture-phase listener that forwarded any title-strip click to
+        // .command-center. It made things worse -- 0 of 3 taps opened the palette afterwards,
+        // against 5 of 5 before -- because VS Code binds mousedown on that element itself and the
+        // handler's preventDefault/stopPropagation swallowed the real event before it arrived.
+        // The CSS above is what actually fixed the original "dead" taps.
++ "}catch(e){}})();";
 
 
     private final Handler ui = new Handler(Looper.getMainLooper());
