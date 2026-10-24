@@ -542,7 +542,12 @@ public final class TermuxBootstrap {
                   {
                     String have = new String(java.nio.file.Files.readAllBytes (settingsFile.toPath ()),
                                               java.nio.charset.StandardCharsets.UTF_8);
-                    if (have.contains ("usr/bin/ubuntu") && ! have.contains ("ssh -p"))
+                    // Both markers, not just one: an earlier hand-written settings file had the
+                    // launcher but none of the other profiles, and the single check treated that
+                    // as current -- so termux-app-ssh-ubuntu never appeared.
+                    if (have.contains ("usr/bin/ubuntu")
+                        && have.contains ("termux-app-ssh-ubuntu")
+                        && ! have.contains ("ssh -p \\\"-o\\\""))
                       continue;
                   }
                 catch (java.io.IOException ignored)
