@@ -7,6 +7,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Message;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -16,6 +17,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -110,6 +112,34 @@ public class MainActivity extends Activity {
      * present.
      */
         /**
+     * True for URLs that belong to the workbench itself (the bundled code-server on 127.0.0.1).
+     *
+     * <p>Everything else has to leave the WebView: a plain link click, a {@code target=_blank}
+     * link and {@code vscode.env.openExternal} (Kimi Code's device-code login, for one) all end up
+     * here. Letting them load in place replaces the workbench with the external page, which is why
+     * signing in used to lose the editor.
+     */
+    private static boolean isWorkbenchUrl(Uri uri) {
+        String scheme = uri.getScheme();
+        if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) return true;
+        String host = uri.getHost();
+        return host == null || "127.0.0.1".equals(host) || "localhost".equals(host)
+                || "::1".equals(host);
+    }
+
+    /** Hand an off-origin URL to the system browser instead of navigating the workbench. */
+    private void openInSystemBrowser(Uri uri) {
+        try {
+            Intent view = new Intent(Intent.ACTION_VIEW, uri);
+            view.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(view);
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "cannot open externally: " + uri.getScheme()
+                    + "://" + uri.getAuthority(), e);
+        }
+    }
+
+    /**
      * Make the title bar and the terminal's profile chevron usable with a finger.
      *
      * Two overlays were swallowing taps, both measured on the device rather than guessed at:
@@ -202,6 +232,12 @@ public class MainActivity extends Activity {
         ws.setJavaScriptEnabled(true);
         ws.setDomStorageEnabled(true);
         ws.setAllowFileAccess(false);
+        // vscode.env.openExternal and target=_blank links go through window.open. With multiple
+        // windows disabled the WebView either ignores that or loads it in place (replacing the
+        // workbench); enabling it routes them to onCreateWindow, which sends the URL to the real
+        // browser instead.
+        ws.setSupportMultipleWindows(true);
+        ws.setJavaScriptCanOpenWindowsAutomatically(true);
         // The workbench keeps its user settings in the WebView's IndexedDB, not in the server's
         // settings.json -- that file is proven ignored (User/, Machine/ and the workspace's
         // .vscode were each written and each had no effect). Injecting into the store it does read
@@ -212,6 +248,25 @@ public class MainActivity extends Activity {
                 // Applied on every load, not once: the workbench recreates its DOM when the
                 // window reloads, and the stylesheet would go with it.
                 view.evaluateJavascript(TOUCH_FIX_JS, null);
+            }
+
+            /** API 24+. Main-frame navigations only: sub-frames stay inside the workbench. */
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                if (!request.isForMainFrame()) return false;
+                Uri uri = request.getUrl();
+                if (isWorkbenchUrl(uri)) return false;
+                openInSystemBrowser(uri);
+                return true;
+            }
+
+            /** Legacy path, still used when the API-24 overload is not consulted. */
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                Uri uri = Uri.parse(url);
+                if (isWorkbenchUrl(uri)) return false;
+                openInSystemBrowser(uri);
+                return true;
             }
         });
         web.setWebChromeClient(new WebChromeClient() {
@@ -225,6 +280,38 @@ public class MainActivity extends Activity {
                 i.setType("*/*");
                 i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 startActivityForResult(i, SafBridge.REQ_WEB);
+                return true;
+            }
+
+            /**
+             * window.open() from the workbench (vscode.env.openExternal, target=_blank) creates
+             * a throw-away WebView here. Its first navigation is the real URL; hand that to the
+             * system browser and never add the popup to the view tree, so the workbench stays up.
+             */
+            @Override
+            public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture,
+                                          Message resultMsg) {
+                WebView popup = new WebView(view.getContext());
+                popup.setWebViewClient(new WebViewClient() {
+                    @Override
+                    public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest request) {
+                        Uri uri = request.getUrl();
+                        if (isWorkbenchUrl(uri)) return false;
+                        openInSystemBrowser(uri);
+                        return true;
+                    }
+
+                    @Override
+                    public boolean shouldOverrideUrlLoading(WebView v, String url) {
+                        Uri uri = Uri.parse(url);
+                        if (isWorkbenchUrl(uri)) return false;
+                        openInSystemBrowser(uri);
+                        return true;
+                    }
+                });
+                WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+                transport.setWebView(popup);
+                resultMsg.sendToTarget();
                 return true;
             }
         });

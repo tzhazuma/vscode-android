@@ -102,3 +102,39 @@ itself, because that is a git submodule; cloning it is the only missing piece.
 All four are ARM aarch64 shared objects exporting `napi_register_module_v1` and needing
 only `libc++_shared`, `libm`, `libdl` and `libc` -- the same set the Android node runtime
 already ships.
+
+## `pet` (Python Environment Tool)
+
+`ms-python.vscode-python-envs` 1.40.0 is installed from the **universal** VSIX, which has no
+`python-env-tools/bin/pet`. The platform VSIXes are where that binary lives, and Open VSX has
+no `linux-arm64` build of the extension at all:
+`https://open-vsx.org/api/ms-python/vscode-python-envs/linux-arm64` -> "Extension not found".
+The Python extension therefore fails with `spawn .../python-env-tools/bin/pet ENOENT`.
+
+`pet` is Rust, from `https://github.com/microsoft/python-environment-tools` (v2024.16.0).
+Its own releases attach no assets, and its Linux builds are glibc
+(`aarch64-unknown-linux-gnu`) -- neither runs under Android's bionic. It builds directly for
+`aarch64-linux-android` with the NDK, though:
+
+```sh
+NDK=$HOME/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$NDK/aarch64-linux-android28-clang
+export CC_aarch64_linux_android=$NDK/aarch64-linux-android28-clang
+export AR_aarch64_linux_android=$NDK/llvm-ar
+export CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_DEBUG=0 \
+       CARGO_PROFILE_RELEASE_STRIP=true
+
+git clone --depth 1 https://github.com/microsoft/python-environment-tools.git
+cd python-environment-tools
+cargo build -p pet --release --target aarch64-linux-android
+```
+
+The result is `target/aarch64-linux-android/release/pet` (4.8 MB, PIE,
+interpreter `/system/bin/linker64`). It is committed as
+`android-app/app/src/main/res/raw/pet`; `PetPatch` copies it into every installed
+`ms-python.vscode-python-envs-*` / `ms-python.python-*` extension at boot unless that
+extension already ships a working `pet`.
+
+Verified on the device: `pet --version` -> `pet 0.1.0`; `pet resolve .../usr/bin/python`
+reports Python 3.14.8 and the prefix.
+

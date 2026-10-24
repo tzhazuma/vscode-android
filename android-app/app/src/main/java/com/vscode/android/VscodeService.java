@@ -155,6 +155,9 @@ public class VscodeService extends Service {
             TermuxBootstrap.writeTerminalProfiles(this);
             GalleryPatch.apply(this);
             TerminalProfilesPatch.apply(this);
+            // Must be in place before the extension host can resolve an interpreter: the universal
+            // vscode-python-envs VSIX has no platform binaries, so pet comes from res/raw/pet.
+            PetPatch.apply(this);
             BootLog.say("starting code-server (port is picked inside startWeb) ...");
             process = VscodeRuntime.startWeb(this, nld, new VscodeRuntime.Listener() {
                 @Override public void onUrl(String url) {

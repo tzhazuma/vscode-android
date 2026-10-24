@@ -110,6 +110,15 @@ public final class VscodeRuntime {
                 + (prefixLib.isDirectory() ? ":" + prefixLib.getAbsolutePath() : ""));
         env.put("HOME", files.getAbsolutePath());
         env.put("TMPDIR", files.getAbsolutePath());
+        // The app's home directory is files/home (that is where the terminal profiles put HOME),
+        // but code-server itself must keep HOME=filesDir: $HOME/.local/share/code-server -- the
+        // user data, settings and every installed extension -- lives under it, and moving HOME
+        // would move all of that too. Kimi Code resolves its data directory as $KIMI_CODE_HOME
+        // first and ~/.kimi-code second, so without this it creates an empty filesDir/.kimi-code
+        // and reports "model setup required" even though the config the user copied lives in
+        // files/home/.kimi-code.
+        env.put("KIMI_CODE_HOME",
+                new File(new File(files, "home"), ".kimi-code").getAbsolutePath());
         // filesDir/bin holds the `saf` command (the SAF contract, usable from
         // dsh's shell) -- putting it on PATH is what makes `saf open` work from
         // any command dsh runs.
@@ -292,7 +301,16 @@ public final class VscodeRuntime {
                 "--expose-internals",
                 "--require", platfix.getAbsolutePath(),
                 bin.getAbsolutePath(),
-                "--bind-addr", "127.0.0.1:" + (webPort = pickFreePort()), "--auth", "none");
+                "--bind-addr", "127.0.0.1:" + (webPort = pickFreePort()), "--auth", "none",
+                // code-server's web client asks before opening an external site (the
+                // "Do you want code-server to open the external website?" dialog). Kimi Code's
+                // login is a device-code flow: it calls vscode.env.openExternal(verification URL)
+                // and only starts polling auth.kimi.com after that call resolves. With the dialog
+                // unanswered the call never resolves, the browser page can report success, and the
+                // extension still sits signed out. Trusting the two Kimi origins makes openExternal
+                // return immediately, so polling begins.
+                "--link-protection-trusted-domains", "https://www.kimi.com",
+                "--link-protection-trusted-domains", "https://auth.kimi.com");
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         final int boundPort = webPort;
