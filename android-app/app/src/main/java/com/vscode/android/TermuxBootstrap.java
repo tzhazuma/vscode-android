@@ -716,7 +716,10 @@ public final class TermuxBootstrap {
                 + "                 \"-t\", \"root@127.0.0.1\", \"proot-distro login ubuntu\"],\n"
                 + "      \"env\": { \"TERM\": \"xterm-256color\" } }\n"
                 + "  },"
-                + "  \"dshAndroidProfilesVersion\": 2"
+                // The default is picked per platform too, so `+` starts the same shell that
+                // `terminal.integrated.defaultProfile.linux` names.
+                + "  \"terminal.integrated.defaultProfile.android\": \"termux\",\n"
+                + "  \"dshAndroidProfilesVersion\": 3"
                 + "}\n";
         // Write the same document to both scopes.
         //
@@ -755,7 +758,8 @@ public final class TermuxBootstrap {
                     // "looked" right. Parse first; rewrite on any structural problem.
                     if (have.contains ("usr/bin/ubuntu")
                         && have.contains ("termux-app-ssh-ubuntu")
-                        && have.contains ("dshAndroidProfilesVersion")
+                        && have.contains ("dshAndroidProfilesVersion\": 3")
+                        && have.contains ("defaultProfile.android")
                         && ! have.contains ("ssh -p \\\"-o\\\"")
                         && parsesAsJson (have))
                       continue;
