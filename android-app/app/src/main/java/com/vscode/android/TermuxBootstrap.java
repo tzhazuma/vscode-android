@@ -245,7 +245,7 @@ public final class TermuxBootstrap {
                 + "Acquire::AllowInsecureRepositories \"true\";\n";
         installDpkgShim(ctx);
         fixPkgCachePath(ctx);
-        unpinMirror(ctx);
+        chooseMirrorGroup(ctx);
         writeTerminalProfiles(ctx);
         int repaired = repairKeyringLinks(prefix(ctx));
         if (repaired > 0) {
@@ -1019,31 +1019,36 @@ public final class TermuxBootstrap {
     }
 
     /**
-     * Undo an earlier pin, so pkg tests mirrors again.
+     * Point pkg at a mirror <em>group</em>, so it measures and picks the fastest one.
      *
-     * <p>An earlier build of this app pinned the mirror: it wrote {@code chosen_mirrors} as a
-     * symlink to one host and forced {@code sources.list} to match. That made the six-hour cache
-     * check moot -- {@code select_mirror()} reads {@code chosen_mirrors} first and returns, so the
-     * sweep never ran at all, and a host that worked one week could be dead the next with nothing
-     * to fall back to.
+     * <p>Three earlier states were all wrong in different ways. The stock bootstrap left pkg
+     * scanning every mirror on earth, which measured 71 URLs for minutes and then picked a random
+     * European host. A previous build of this app pinned one host, which made the choice
+     * deterministic but also made the sweep dead: a host that dies takes the app with it. Removing
+     * the pin restores the sweep, but the sweep then picked mirror.leitecastro.com at 4.6 kB/s.
      *
-     * <p>With the cache path fixed ({@link #fixPkgCachePath}) the intended behaviour works: a cold
-     * or stale cache sweeps every mirror and picks by measured speed, and a cache younger than six
-     * hours just re-checks the current one. Removing the symlink is what restores that, so this
-     * deletes a pin this app created and leaves a user's own mirror group alone.
+     * <p>{@code chosen_mirrors} may name a <em>directory</em>, which {@code termux-change-repo}
+     * writes when you pick a region. That is the correct lever: pkg then tests only the regional
+     * candidates and picks the fastest by measurement -- 432 kB/s here against the 4.6 kB/s of the
+     * worldwide sweep, and still a real test rather than a hardcoded host.
      */
-    private static void unpinMirror(Context ctx) {
+    private static void chooseMirrorGroup(Context ctx) {
         File prefix = prefix(ctx);
+        File group = new File(prefix, "etc/termux/mirrors/chinese_mainland");
         File chosen = new File(prefix, "etc/termux/chosen_mirrors");
+        if (!group.isDirectory()) return;
         try {
-            if (!java.nio.file.Files.isSymbolicLink(chosen.toPath())) return;
-            java.nio.file.Path target = java.nio.file.Files.readSymbolicLink(chosen.toPath());
-            // Only a link into this prefix's own mirror tree is ours to remove.
-            if (!target.toString().startsWith(prefix.getAbsolutePath())) return;
-            java.nio.file.Files.deleteIfExists(chosen.toPath());
-            BootLog.say("pkg: removed a pinned mirror so pkg tests them again");
+            if (java.nio.file.Files.isSymbolicLink(chosen.toPath())) {
+                java.nio.file.Path target = java.nio.file.Files.readSymbolicLink(chosen.toPath());
+                if (target.toString().equals(group.getAbsolutePath())) return;   // already right
+                java.nio.file.Files.deleteIfExists(chosen.toPath());
+            } else if (chosen.exists()) {
+                return;   // a directory or file the user chose themselves
+            }
+            android.system.Os.symlink(group.getAbsolutePath(), chosen.getAbsolutePath());
+            BootLog.say("pkg: mirror group set to chinese_mainland");
         } catch (Throwable e) {
-            BootLog.say("pkg: could not clear the pinned mirror: " + e);
+            BootLog.say("pkg: could not set the mirror group: " + e);
         }
     }
 
