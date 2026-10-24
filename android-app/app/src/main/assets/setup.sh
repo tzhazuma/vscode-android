@@ -190,12 +190,154 @@ WRAP
   echo "  ok   wrapper at $PREFIX/bin/opencode and $FILES/bin/opencode"
 }
 
+
+# The workbench itself is a host process, but every compiler lives inside the container. A task
+# that runs `gcc` directly would look for it on bionic and fail, so each task re-enters Ubuntu with
+# `ubuntu -c` and works in /workspace (the bind mount of $FILES/home). That makes the Run/Build
+# commands use the same toolchain as a container shell.
+setup_vscode() {
+  say "editor tasks and language extensions"
+  local home="$FILES/home"
+  local ub="$PREFIX/bin/ubuntu"
+  mkdir -p "$home/.vscode"
+
+  # A tiny runner keeps the JSON readable and gives every language the same behaviour.
+  cat > "$home/.vscode/run-in-ubuntu.sh" <<'RUN'
+#!/system/bin/sh
+# Run a command inside the Ubuntu container with /workspace as the working directory.
+exec "$(dirname "$0")/../../usr/bin/ubuntu" -c 'cd /workspace && "$@"' sh "$@"
+RUN
+  chmod 755 "$home/.vscode/run-in-ubuntu.sh"
+
+  cat > "$home/.vscode/tasks.json" <<'TASKS'
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "C: gcc build",
+      "type": "shell",
+      "command": "${workspaceFolder}/.vscode/run-in-ubuntu.sh",
+      "args": ["gcc", "-O2", "-g", "-o", "${fileBasenameNoExtension}", "${fileBasename}", "-lm"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "C++: g++ build",
+      "type": "shell",
+      "command": "${workspaceFolder}/.vscode/run-in-ubuntu.sh",
+      "args": ["g++", "-std=c++20", "-O2", "-g", "-o", "${fileBasenameNoExtension}", "${fileBasename}"],
+      "group": "build",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "C/C++: clang build",
+      "type": "shell",
+      "command": "${workspaceFolder}/.vscode/run-in-ubuntu.sh",
+      "args": ["clang", "-O2", "-g", "-o", "${fileBasenameNoExtension}", "${fileBasename}"],
+      "group": "build",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "C/C++: cmake build",
+      "type": "shell",
+      "command": "${workspaceFolder}/.vscode/run-in-ubuntu.sh",
+      "args": ["sh", "-c", "cmake -S . -B build -G Ninja && cmake --build build"],
+      "group": "build",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "C/C++: make",
+      "type": "shell",
+      "command": "${workspaceFolder}/.vscode/run-in-ubuntu.sh",
+      "args": ["make"],
+      "group": "build",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "Rust: cargo run",
+      "type": "shell",
+      "command": "${workspaceFolder}/.vscode/run-in-ubuntu.sh",
+      "args": ["cargo", "run", "--release"],
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "Go: go run",
+      "type": "shell",
+      "command": "${workspaceFolder}/.vscode/run-in-ubuntu.sh",
+      "args": ["go", "run", "."],
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "Java: javac",
+      "type": "shell",
+      "command": "${workspaceFolder}/.vscode/run-in-ubuntu.sh",
+      "args": ["javac", "-d", "out", "${fileBasename}"],
+      "group": "build",
+      "problemMatcher": ["$javac"]
+    },
+    {
+      "label": "Java: java <current class>",
+      "type": "shell",
+      "command": "${workspaceFolder}/.vscode/run-in-ubuntu.sh",
+      "args": ["sh", "-c", "java -cp out \"${fileBasenameNoExtension}\""],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Python: run with Ubuntu python",
+      "type": "shell",
+      "command": "${workspaceFolder}/.vscode/run-in-ubuntu.sh",
+      "args": ["python3", "${fileBasename}"],
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    }
+  ]
+}
+TASKS
+
+  # The Run (play) button needs a launch configuration, not a task. Debugging through proot is not
+  # reliable, but running a file is, so these configurations are ready-use "run without debugging".
+  cat > "$home/.vscode/launch.json" <<'LAUNCH'
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run in Ubuntu (no debugger)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/.vscode/run-in-ubuntu.sh",
+      "args": ["sh", "-c", "\"$1\"", "sh", "${fileBasename}"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}
+LAUNCH
+  echo "  ok   .vscode/{tasks,launch}.json and run-in-ubuntu.sh"
+
+  # Language extensions. Best effort: Open VSX does not carry an arm64 build for everything, and the
+  # workbench works without any of them.
+  local vsix="$PREFIX/bin/vsix-install"
+  if [ -f "$vsix" ]; then
+    for ext in ms-vscode.cpptools ms-python.python golang.go rust-lang.rust-analyzer \
+               vscjava.vscode-java-pack vadimcn.vscode-lldb; do
+      if "$vsix" "$ext" >/dev/null 2>&1; then echo "  ok   $ext"; else echo "  skip $ext (no build for this platform)"; fi
+    done
+  else
+    echo "  skip extensions (vsix-install not present)"
+  fi
+}
+
 case "${1:-all}" in
   shell) setup_shell ;;
   dev)   setup_dev ;;
   brew)  setup_brew ;;
   opencode) setup_opencode ;;
-  all)   setup_shell; setup_dev; setup_brew; setup_opencode ;;
-  *) echo "usage: setup [all|shell|dev|brew|opencode]" >&2; exit 2 ;;
+  vscode) setup_vscode ;;
+  all)   setup_shell; setup_dev; setup_brew; setup_vscode; setup_opencode ;;
+  *) echo "usage: setup [all|shell|dev|brew|vscode|opencode]" >&2; exit 2 ;;
 esac
 say "done"
