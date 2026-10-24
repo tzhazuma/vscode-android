@@ -25,9 +25,28 @@ mkdir -p "$HOME" "$TMPDIR" 2>/dev/null
 say() { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Which command proves a package is already there. Everything here is also installed by the APK's
+# own bootstrap on most builds, so "already present" is the normal case, not an error.
+probe_for() {
+  case "$1" in
+    python)        echo python3 ;;
+    golang)        echo go ;;
+    rust)          echo rustc ;;
+    openjdk-17)    echo java ;;
+    openssh)       echo ssh ;;
+    android-tools) echo adb ;;
+    *)             echo "$1" ;;
+  esac
+}
+
 pkg_install() {
   for p in "$@"; do
-    if "$PREFIX/bin/pkg-install" "$p" >/dev/null 2>&1; then
+    local probe; probe="$(probe_for "$p")"
+    if command -v "$probe" >/dev/null 2>&1; then
+      echo "  ok   $p (already present)"
+      continue
+    fi
+    if "$PREFIX/bin/pkg-install" "$p" >/dev/null 2>&1 && command -v "$probe" >/dev/null 2>&1; then
       echo "  ok   $p"
     else
       echo "  FAIL $p"
