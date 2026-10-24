@@ -99,3 +99,22 @@ not wired up.
   `visibility: hidden`, and `.command-center-center` is `display: none`, so the white strip at the top
   is the title bar background and not an input. The injected stylesheet forces it visible; without
   that, taps on the "search box" hit nothing.
+
+### Choosing a terminal profile
+
+Two different controls, and they are easy to confuse:
+
+- **The `+` button** creates a terminal with the *default* profile
+  (`terminal.integrated.defaultProfile.linux`, `termux`).
+- **The chevron next to it** is a *terminal switcher*: on this build it lists the terminals that are
+  already open (two `bash` entries if two are running), which reads as "it only makes bash". It is
+  not the profile picker.
+- **The profile picker** is the command palette: `Ctrl+Shift+P` → `Terminal: Select Default Profile`
+  lists all six (verified on the device: termux, android, termux-app-ssh, ubuntu, adb,
+  termux-app-ssh-ubuntu). `Terminal: Create New Terminal (With Profile)` starts one with a chosen
+  profile without changing the default.
+
+The first two iterations of this document claimed the chevron was broken. It was not: the settings
+file had been corrupted by a bad edit, so `terminal.integrated.profiles.*` was unparseable and the
+workbench fell back to auto-detected shells. After that was fixed the profile list came back, but the
+chevron still shows terminals, because that is what it lists.
