@@ -297,12 +297,49 @@ public final class TermuxBootstrap {
                 + "  printf 'nameserver 223.5.5.5\\nnameserver 119.29.29.29\\nnameserver 8.8.8.8\\n' > \"$F/ubuntu/etc/resolv.conf\"\n"
                 + "  chmod 644 \"$F/ubuntu/etc/resolv.conf\"\n"
                 + "fi\n"
+                // Bind the paths the two halves of the app actually share, at names that make
+                // sense inside the guest.
+                //
+                // A bare `-b "$F/home"` puts the files at /data/user/0/<pkg>/files/home inside
+                // Ubuntu, which is unusable from an editor and does not match what the workbench
+                // shows, so the same directory appears twice: as /workspace (what VS Code opens)
+                // and as /root (so a shell starts where the files are). The Termux prefix is bound
+                // at /termux so the guest can run its binaries and read its packages.
+                //
+                // `/sdcard` is deliberately not bound: proot reports "can't sanitize binding
+                // /sdcard: Permission denied" and then prepends that warning to the output of
+                // every single command, which would look like a broken guest. Documents are
+                // reached through VS Code's own file pickers instead.
+                + "if [ -d \"$F/home\" ]; then mkdir -p \"$F/home\"; fi\n"
+                + "mkdir -p \"$F/ubuntu/workspace\" 2>/dev/null\n"
                 + "exec \"$P/bin/proot\" --link2symlink -0 -r \"$F/ubuntu\" \\\n"
-                + "  -b /dev -b /proc -b /sys -b \"$F/home\" \\\n"
+                + "  -b /dev -b /proc -b /sys \\\n"
+                + "  -b \"$F/home\":/workspace \\\n"
+                + "  -b \"$F/home\":/root \\\n"
+                + "  -b \"$F/usr\":/termux \\\n"
                 + "  -w /root \\\n"
                 + "  /usr/bin/env -i HOME=/root TERM=\"${TERM:-xterm-256color}\" \\\n"
                 + "    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\\n"
                 + "  /bin/bash -l \"$@\"\n";
+        // A host-side python that is really the container's python.
+        //
+        // The Python extension spawns whatever path you give it and speaks to it over stdin/stdout,
+        // so the interpreter has to be a real executable on the host side. Ubuntu's python3 cannot
+        // run on bionic (it is glibc), so this wrapper re-enters the container and execs it there.
+        // It is deliberately argument-transparent: describe/interpreter discovery, `--version`,
+        // `-c`, and script runs all go through unchanged.
+        java.io.File ubuntuPython = new java.io.File(new java.io.File(prefix(ctx), "bin"), "ubuntu-python");
+        String ubuntuPythonScript =
+                "#!/system/bin/sh\n"
+                + "# Run the Ubuntu container's python3 as if it were a host interpreter.\n"
+                + "exec \"$(dirname \"$0\")/ubuntu\" -c 'exec python3 \"$@\"' sh \"$@\"\n";
+        try (java.io.FileOutputStream w = new java.io.FileOutputStream(ubuntuPython)) {
+            w.write(ubuntuPythonScript.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.io.IOException e) {
+            BootLog.say("could not write ubuntu-python: " + e);
+        }
+        //noinspection ResultOfMethodCallIgnored
+        ubuntuPython.setExecutable(true, false);
         try (java.io.FileOutputStream w = new java.io.FileOutputStream(ubuntu)) {
             w.write(ubuntuScript.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         } catch (java.io.IOException e) {

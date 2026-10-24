@@ -185,9 +185,13 @@ public class MainActivity extends Activity {
         // background, not an input -- there was nothing to type into, and elementFromPoint over it
         // returned the bar, never an input. Shown and given a width, the same point resolves to
         // `input`, and a real tap on it opens the palette (verified on the device).
-        + ".part.titlebar .command-center{visibility:visible !important}"
+        + ".part.titlebar .command-center{visibility:visible !important;"
+        // Narrow enough to leave the title bar's own dropdown (x 848) reachable: at 320 px of
+        // centre width the strip grew to 731 px and covered it, which is a regression this
+        // measurement caught.
+        + "max-width:360px !important;margin:0 auto !important}"
         + ".part.titlebar .command-center .command-center-center{display:block !important;"
-        + "visibility:visible !important;width:320px !important;min-width:200px !important}"
+        + "visibility:visible !important;width:200px !important;min-width:140px !important}"
         + ".part.titlebar .command-center .command-center-quick-pick{visibility:visible !important}"
         + "';"
         + "document.head.appendChild(s);"
