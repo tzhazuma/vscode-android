@@ -490,7 +490,25 @@ public final class TermuxBootstrap {
         }
     }
 
+/** Copy an asset to a path, making it executable. Silent when the asset is absent. */
+    private static void copyAsset(Context ctx, String name, File target) {
+        try (java.io.InputStream in = ctx.getAssets().open(name)) {
+            java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+            byte[] chunk = new byte[8192];
+            int n;
+            while ((n = in.read(chunk)) > 0) buf.write(chunk, 0, n);
+            java.nio.file.Files.write(target.toPath(), buf.toByteArray());
+            //noinspection ResultOfMethodCallIgnored
+            target.setExecutable(true, false);
+        } catch (java.io.IOException e) {
+            BootLog.say("asset " + name + ": " + e);
+        }
+    }
+
     private static void installSetupScript(Context ctx) {
+        // `setup vscode` needs this to install extensions from a VSIX, because code-server refuses
+        // anything Open VSX has no build for on this platform.
+        copyAsset(ctx, "vsix-install.sh", new File(new File(prefix(ctx), "bin"), "vsix-install"));
         File target = new File(new File(prefix(ctx), "bin"), "setup");
         try (java.io.InputStream in = ctx.getAssets().open("setup.sh")) {
             java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
