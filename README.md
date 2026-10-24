@@ -612,3 +612,39 @@ its extra page reload were removed afterwards; dead code that never fires is wor
 What is left is to patch the workbench bundle itself -- the same technique that fixed the
 extensions gallery -- so the terminal profile list ships with `ubuntu` built in. That is a code
 change in `lib/vscode/out`, not a settings write, and it has not been attempted.
+
+## Opening the terminal profile picker
+
+Three ways, all working in this build:
+
+1. **The arrow next to `+`** in the terminal panel — it lists every profile, `ubuntu` included.
+2. **Command Palette** — `Ctrl+Shift+P` (or the ☰ menu) → `Terminal: Select Default Profile`.
+3. **Menu ☰ → Terminal → Configure Terminal Settings** for the full terminal settings page.
+
+`ubuntu` starts the container shipped in this APK; `termux` starts the bundled bash; `android` is
+plain toybox. The default can be switched in the same picker.
+
+## The title bar and the status-bar gesture
+
+The window is edge-to-edge with the system bars hidden. Without padding, the workbench's title and
+search bar sat inside the strip where a downward swipe opens the status bar, and on this ROM a tap
+there is often consumed by the system — which is what "tapping the search box does nothing" was.
+The WebView is now padded by the status-bar inset, so the bar sits below that strip.
+
+## What the apps can reach on shared storage
+
+`files/storage-check.txt` records what each app's own process sees, written at startup:
+
+```
+/sdcard: OK 59 entries
+/storage/emulated/0: OK 59 entries
+/sdcard/Download: OK 150 entries
+```
+
+That file exists because `run-as` cannot answer the question: it runs in the restricted `runas_app`
+domain and is denied external storage whatever the app's grants are.
+
+VS Code has the same check and the same code path, but on this device it reports `DENIED`: the ROM
+rejects the `MANAGE_EXTERNAL_STORAGE` appop for its package (a `rejectTime` is recorded), so the
+switch has to be turned on by hand in Settings → Apps → VS Code → Special app access → All files
+access. The app opens that screen on launch when the permission is missing.
