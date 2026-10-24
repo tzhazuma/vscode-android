@@ -12,7 +12,10 @@
 #   setup brew         Linuxbrew inside the Ubuntu container
 set -uo pipefail
 
-FILES="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# This script lives in $PREFIX/bin, so the app's files directory is two levels up. One level up is
+# $PREFIX itself, and using that as FILES made PREFIX=$FILES/usr point at $PREFIX/usr -- a path
+# that does not exist -- so every probe in the first run reported FAIL.
+FILES="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PREFIX="$FILES/usr"
 export PREFIX
 export LD_LIBRARY_PATH="$FILES/rt:$PREFIX/lib"
