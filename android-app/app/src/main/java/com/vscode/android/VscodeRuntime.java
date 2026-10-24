@@ -135,6 +135,16 @@ public final class VscodeRuntime {
         // Termux is installed on many of these devices and is the only place a real bash lives.
         // Its own uid is the only one allowed to execute files there, so these are *pointers* for
         // tooling and for the RUN_COMMAND bridge -- not something this process can exec directly.
+        // curl and everything built on libcurl has a CA path compiled in pointing at the Termux
+        // prefix (/data/data/com.termux/files/usr/etc/tls/cert.pem), which this uid cannot read:
+        // every TLS request then fails with "error adding trust anchors from file". The variable
+        // overrides that path, so setting it here fixes curl for the whole process tree.
+        java.io.File caFile = new java.io.File(new java.io.File(files, "usr"), "etc/tls/cert.pem");
+        if (caFile.isFile()) {
+            env.put("CURL_CA_BUNDLE", caFile.getAbsolutePath());
+            env.put("SSL_CERT_FILE", caFile.getAbsolutePath());
+        }
+
         env.put("TERMUX_PREFIX", "/data/data/com.termux/files/usr");
         env.put("TERMUX_BASH", "/data/data/com.termux/files/usr/bin/bash");
         env.put("DSH_SAF_DIR", files.getAbsolutePath());
