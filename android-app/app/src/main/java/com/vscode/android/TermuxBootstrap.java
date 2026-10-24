@@ -6,6 +6,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.util.Map;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -425,6 +426,21 @@ public final class TermuxBootstrap {
         if (stamp.isFile() || !setup.isFile()) return;
         try {
             ProcessBuilder pb = new ProcessBuilder(setup.getAbsolutePath(), "all");
+            // The script needs the same environment the server gets. Without it the first run
+            // dies immediately with `CANNOT LINK EXECUTABLE bash: library libandroid-support.so
+            // not found`, because rt/ and usr/lib are not on the default loader path.
+            Map<String, String> env = pb.environment();
+            File files = ctx.getFilesDir();
+            File usr = new File(files, "usr");
+            env.put("PREFIX", usr.getAbsolutePath());
+            env.put("LD_LIBRARY_PATH", new File(files, "rt").getAbsolutePath()
+                    + ":" + new File(usr, "lib").getAbsolutePath());
+            env.put("PATH", usr.getAbsolutePath() + "/bin:/system/bin:/system/xbin");
+            env.put("HOME", files.getAbsolutePath());
+            env.put("TMPDIR", files.getAbsolutePath());
+            env.put("APT_CONFIG", new File(usr, "etc/apt/apt.conf").getAbsolutePath());
+            env.put("CURL_CA_BUNDLE", new File(usr, "etc/tls/cert.pem").getAbsolutePath());
+            env.put("SSL_CERT_FILE", new File(usr, "etc/tls/cert.pem").getAbsolutePath());
             pb.redirectErrorStream(true);
             pb.redirectOutput(ProcessBuilder.Redirect.appendTo(
                     new File(ctx.getFilesDir(), "setup-first-run.log")));
