@@ -589,6 +589,30 @@ public final class TermuxBootstrap {
      * absolute, and without APT_CONFIG the toybox/termux shells cannot reach the package index
      * that writeAptConfig sets up.
      */
+/**
+     * Whether a string is a syntactically valid JSON document.
+     *
+     * {@code skipValue} consumes one complete value; the trailing {@code peek} then has to hit the
+     * end of input. A truncated or duplicated fragment fails in one of those two calls, which is
+     * what a marker-string check cannot detect.
+     */
+    @SuppressWarnings("StatementWithEmptyBody")
+    private static boolean parsesAsJson(String text) {
+        if (text == null || text.trim().isEmpty()) return false;
+        try {
+            android.util.JsonReader reader =
+                    new android.util.JsonReader(new java.io.StringReader(text));
+            reader.setLenient(false);
+            reader.skipValue();
+            reader.peek();          // throws when there is a trailing fragment
+            return true;
+        } catch (java.io.EOFException e) {
+            return true;            // consumed everything: a well-formed single value
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
     public static void writeTerminalProfiles(Context ctx) {
         File dir = new File(ctx.getFilesDir(), ".local/share/code-server/User");
         //noinspection ResultOfMethodCallIgnored
@@ -635,6 +659,21 @@ public final class TermuxBootstrap {
                 + "    \"ubuntu\": {\n"
                 + "      \"path\": \"" + p + "/bin/ubuntu\"\n"
                 + "    },\n"
+                // adb lives in the Termux app, whose data directory this app cannot execute from
+                // (different uid, S_IXOTHER clear). Termux's sshd does run adb, so this profile is a
+                // Termux shell opened over ssh with adb already on PATH.
+                + "    \"adb\": {\n"
+                + "      \"path\": \"" + p + "/bin/ssh\",\n"
+                + "      \"args\": [\"-t\", \"-p\", \"8022\", \"-i\", \"" + ctx.getFilesDir().getAbsolutePath() + "/ssh/termux_ed25519\",\n"
+                + "                 \"-o\", \"StrictHostKeyChecking=no\",\n"
+                + "                 \"-o\", \"UserKnownHostsFile=/dev/null\",\n"
+                + "                 \"-o\", \"LogLevel=ERROR\", \"u0_a238@127.0.0.1\"],\n"
+                + "      \"env\": {\n"
+                + "        \"LD_LIBRARY_PATH\": \"" + ctx.getFilesDir().getAbsolutePath() + "/rt:" + p + "/lib\",\n"
+                + "        \"PATH\": \"" + p + "/bin:/system/bin\",\n"
+                + "        \"TERM\": \"xterm-256color\"\n"
+                + "      }\n"
+                + "    },\n"
                 // Shell straight into the Ubuntu the standalone Termux app carries, rather than a
                 // second copy here: sshd there listens on 8022 and `proot-distro login ubuntu`
                 // drops into the container. sshpass supplies the password, because an ssh prompt
@@ -648,7 +687,36 @@ public final class TermuxBootstrap {
                 + "                 \"-t\", \"root@127.0.0.1\", \"proot-distro login ubuntu\"],\n"
                 + "      \"env\": { \"TERM\": \"xterm-256color\" }\n"
                 + "    }\n"
-                + "  }\n"
+                + "  },\n"
+                // The workbench picks the profile set from process.platform, which is `android` here,
+                // not `linux`. Listing the same profiles under both keeps the picker populated
+                // whichever key it reads.
+                + "  \"terminal.integrated.profiles.android\": {\n"
+                + "    \"termux\": { \"path\": \"" + p + "/bin/bash\",\n"
+                + "      \"args\": [\"--norc\", \"-i\"],\n"
+                + "      \"env\": { \"PREFIX\": \"" + p + "\",\n"
+                + "        \"HOME\": \"" + ctx.getFilesDir().getAbsolutePath() + "/home\", \"TMPDIR\": \"" + ctx.getFilesDir().getAbsolutePath() + "/tmp\",\n"
+                + "        \"LD_LIBRARY_PATH\": \"" + ctx.getFilesDir().getAbsolutePath() + "/rt:" + p + "/lib\",\n"
+                + "        \"PATH\": \"" + p + "/bin:/system/bin:/system/xbin\",\n"
+                + "        \"APT_CONFIG\": \"" + p + "/etc/apt/apt.conf\",\n"
+                + "        \"TERM\": \"xterm-256color\", \"LANG\": \"en_US.UTF-8\" } },\n"
+                + "    \"android\": { \"path\": \"/system/bin/sh\", \"args\": [\"-i\"],\n"
+                + "      \"env\": { \"TERM\": \"xterm-256color\" } },\n"
+                + "    \"termux-app-ssh\": { \"path\": \"" + p + "/bin/bash\",\n"
+                + "      \"args\": [\"--norc\", \"-i\", \"-c\", \"ssh -p 8022 -i " + ctx.getFilesDir().getAbsolutePath() + "/ssh/termux_ed25519 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR 127.0.0.1\"],\n"
+                + "      \"env\": { \"PREFIX\": \"" + p + "\", \"HOME\": \"" + ctx.getFilesDir().getAbsolutePath() + "/home\",\n"
+                + "        \"LD_LIBRARY_PATH\": \"" + ctx.getFilesDir().getAbsolutePath() + "/rt:" + p + "/lib\",\n"
+                + "        \"PATH\": \"" + p + "/bin:/system/bin\", \"TERM\": \"xterm-256color\" } },\n"
+                + "    \"ubuntu\": { \"path\": \"" + p + "/bin/ubuntu\" },\n"
+                + "    \"termux-app-ssh-ubuntu\": { \"path\": \"" + p + "/bin/sshpass\",\n"
+                + "      \"args\": [\"-p\", \"20030120\", \"ssh\", \"-p\", \"8022\",\n"
+                + "                 \"-o\", \"StrictHostKeyChecking=no\",\n"
+                + "                 \"-o\", \"UserKnownHostsFile=/dev/null\",\n"
+                + "                 \"-o\", \"LogLevel=ERROR\",\n"
+                + "                 \"-t\", \"root@127.0.0.1\", \"proot-distro login ubuntu\"],\n"
+                + "      \"env\": { \"TERM\": \"xterm-256color\" } }\n"
+                + "  },"
+                + "  \"dshAndroidProfilesVersion\": 2"
                 + "}\n";
         // Write the same document to both scopes.
         //
@@ -681,9 +749,15 @@ public final class TermuxBootstrap {
                     // Both markers, not just one: an earlier hand-written settings file had the
                     // launcher but none of the other profiles, and the single check treated that
                     // as current -- so termux-app-ssh-ubuntu never appeared.
+                    // A file that still mentions both markers but no longer parses is kept by a
+                    // marker check and poisons the whole profile list -- that is exactly how the
+                    // picker ended up offering only auto-detected shells while the settings
+                    // "looked" right. Parse first; rewrite on any structural problem.
                     if (have.contains ("usr/bin/ubuntu")
                         && have.contains ("termux-app-ssh-ubuntu")
-                        && ! have.contains ("ssh -p \\\"-o\\\""))
+                        && have.contains ("dshAndroidProfilesVersion")
+                        && ! have.contains ("ssh -p \\\"-o\\\"")
+                        && parsesAsJson (have))
                       continue;
                   }
                 catch (java.io.IOException ignored)

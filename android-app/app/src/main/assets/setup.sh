@@ -322,12 +322,59 @@ LAUNCH
   # workbench works without any of them.
   local vsix="$PREFIX/bin/vsix-install"
   if [ -f "$vsix" ]; then
+    # `jeanp413.open-remote-ssh` rather than `ms-vscode-remote.remote-ssh`: Microsoft's Remote
+    # extensions are proprietary and are not published to Open VSX, so code-server cannot install
+    # them at all. This is the community implementation of the same protocol.
     for ext in ms-vscode.cpptools ms-python.python golang.go rust-lang.rust-analyzer \
-               vscjava.vscode-java-pack vadimcn.vscode-lldb; do
+               vscjava.vscode-java-pack vadimcn.vscode-lldb jeanp413.open-remote-ssh; do
       if "$vsix" "$ext" >/dev/null 2>&1; then echo "  ok   $ext"; else echo "  skip $ext (no build for this platform)"; fi
     done
   else
     echo "  skip extensions (vsix-install not present)"
+  fi
+}
+
+
+# A host key the app owns, and its public half installed into Termux, so `Termux (ssh)` and the adb
+# profile connect without a password. The app cannot write Termux's home directly (different uid),
+# so the key is installed over the one connection that still needs the password.
+setup_ssh() {
+  say "ssh key for the Termux backend"
+  local key="$FILES/ssh/termux_ed25519"
+  mkdir -p "$FILES/ssh"
+  [ -f "$key" ] || "$PREFIX/bin/ssh-keygen" -t ed25519 -N '' -f "$key" -C vscode-android >/dev/null 2>&1
+  chmod 600 "$key" 2>/dev/null
+  local pub; pub="$(cat "$key.pub" 2>/dev/null)"
+  [ -n "$pub" ] || { echo "  FAIL could not create a key"; return 1; }
+  echo "  ok   key at $key"
+
+  # Termux's home, not $HOME: sshd reads /data/data/com.termux/files/home/.ssh.
+  if "$PREFIX/bin/ssh" -p 8022 -i "$key" -o StrictHostKeyChecking=no \
+       -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o LogLevel=ERROR \
+       -o ConnectTimeout=5 u0_a238@127.0.0.1 true 2>/dev/null; then
+    echo "  ok   key already accepted by Termux"
+    return 0
+  fi
+  if [ -x "$PREFIX/bin/sshpass" ]; then
+    if "$PREFIX/bin/sshpass" -p 20030120 "$PREFIX/bin/ssh" -p 8022 \
+         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+         -o ConnectTimeout=8 u0_a238@127.0.0.1 \
+         "H=/data/data/com.termux/files/home; mkdir -p \$H/.ssh; chmod 700 \$H/.ssh; \
+          grep -qxF '$pub' \$H/.ssh/authorized_keys 2>/dev/null || echo '$pub' >> \$H/.ssh/authorized_keys; \
+          chmod 600 \$H/.ssh/authorized_keys; echo INSTALLED" >/dev/null 2>&1; then
+      echo "  ok   public key installed into Termux"
+    else
+      echo "  FAIL could not install the key (is Termux sshd on 8022 running?)"
+    fi
+  else
+    echo "  skip key install (sshpass absent)"
+  fi
+  if "$PREFIX/bin/ssh" -p 8022 -i "$key" -o StrictHostKeyChecking=no \
+       -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o LogLevel=ERROR \
+       -o ConnectTimeout=5 u0_a238@127.0.0.1 "adb version" >/dev/null 2>&1; then
+    echo "  ok   passwordless ssh works, and adb is reachable through it"
+  else
+    echo "  note key not accepted yet; the profile still falls back to a password prompt"
   fi
 }
 
@@ -337,7 +384,8 @@ case "${1:-all}" in
   brew)  setup_brew ;;
   opencode) setup_opencode ;;
   vscode) setup_vscode ;;
-  all)   setup_shell; setup_dev; setup_brew; setup_vscode; setup_opencode ;;
-  *) echo "usage: setup [all|shell|dev|brew|vscode|opencode]" >&2; exit 2 ;;
+  ssh)    setup_ssh ;;
+  all)   setup_shell; setup_dev; setup_ssh; setup_brew; setup_vscode; setup_opencode ;;
+  *) echo "usage: setup [all|shell|dev|ssh|brew|vscode|opencode]" >&2; exit 2 ;;
 esac
 say "done"
