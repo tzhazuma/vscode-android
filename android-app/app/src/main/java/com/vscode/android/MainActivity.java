@@ -41,6 +41,64 @@ public class MainActivity extends Activity {
     private static final String TAG = "VscodeAndroid";
     private TextView status;
     private WebView web;
+
+    /** Ask for the storage the terminal and the file browser need.
+     *
+     * <p>With targetSdk 28 plus requestLegacyExternalStorage in the manifest, READ/WRITE_EXTERNAL
+     * are enough to reach /sdcard; on ROMs that also gate MANAGE_EXTERNAL_STORAGE the settings
+     * screen is opened once so the user can grant it there, which is the only path this device
+     * allows (appops refuses the shell).
+     */
+
+    /** Record whether this app -- in its own context, not via run-as -- can see shared storage.
+     *
+     * The terminal and the file browser both depend on it, and `run-as` cannot answer the
+     * question: it runs in the restricted `runas_app` domain, which is denied external storage
+     * regardless of the app's grants. So the app tests it and leaves the answer where it can be
+     * read back.
+     */
+    private void writeStorageCheck() {
+        java.io.File f = new java.io.File(getFilesDir(), "storage-check.txt");
+        StringBuilder out = new StringBuilder();
+        for (String dir : new String[] { "/sdcard", "/storage/emulated/0", "/sdcard/Download" }) {
+            String[] names = new java.io.File(dir).list();
+            out.append(dir).append(": ")
+               .append(names == null ? "DENIED" : ("OK " + names.length + " entries"))
+               .append('\n');
+        }
+        try (java.io.FileOutputStream w = new java.io.FileOutputStream(f)) {
+            w.write(out.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Exception ignored) { }
+    }
+
+    private void requestStorageAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            java.util.List<String> missing = new java.util.ArrayList<>();
+            for (String p : new String[] {
+                    android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE }) {
+                if (checkSelfPermission(p) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    missing.add(p);
+                }
+            }
+            if (!missing.isEmpty()) {
+                requestPermissions(missing.toArray(new String[0]), 4711);
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                if (!android.os.Environment.isExternalStorageManager()) {
+                    android.content.Intent i = new android.content.Intent(
+                            android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                    i.setData(android.net.Uri.parse("package:" + getPackageName()));
+                    startActivity(i);
+                }
+            } catch (Exception e) {
+                android.util.Log.w("Storage", "all-files screen unavailable: " + e);
+            }
+        }
+    }
+
     private boolean seedAttempted;
 
     /**
@@ -167,6 +225,28 @@ public class MainActivity extends Activity {
         root.addView(web, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
+        // Keep the workbench clear of the status-bar edge.
+        //
+        // The window is edge-to-edge with the system bars hidden, so the WebView's first ~40 px sit
+        // inside the region where a downward swipe opens the status bar -- and on this ROM a tap
+        // there is frequently taken by the system instead of reaching the page. That is exactly
+        // where VS Code puts its title/search bar, which is why tapping it "often does nothing".
+        // Padding the top by the inset moves the bar below the gesture area.
+        final int basePadTop = web.getPaddingTop();
+        web.setOnApplyWindowInsetsListener((v, insets) -> {
+            int top;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.graphics.Insets bars = insets.getInsets(
+                        WindowInsets.Type.statusBars() | WindowInsets.Type.displayCutout());
+                top = Math.max(bars.top, dp(24));
+            } else {
+                top = Math.max(insets.getSystemWindowInsetTop(), dp(24));
+            }
+            v.setPadding(v.getPaddingLeft(), basePadTop + top, v.getPaddingRight(),
+                    v.getPaddingBottom());
+            return insets;
+        });
+
         setContentView(root);
         hideSystemBars();
 
@@ -179,6 +259,8 @@ public class MainActivity extends Activity {
         }
 
         ui.postDelayed(this::poll, 300);
+        requestStorageAccess();
+        writeStorageCheck();
     }
 
     /** dsh owns the whole display: no title bar, no system bars. */
