@@ -60,9 +60,28 @@ pkg_install() {
 setup_shell() {
   say "shell (zsh + oh-my-zsh)"
   pkg_install zsh git curl
+  # Fetch a tarball rather than clone: git over https does not work in this prefix (the CA path
+  # libcurl was built with points at another app's directory), so `git clone` fails here while
+  # curl with our own bundle succeeds.
+  local ca="$PREFIX/etc/tls/cert.pem"
+  fetch_tree() {
+    local url="$1" dest="$2" tmp="$TMPDIR/fetch.tar.gz"
+    rm -rf "$tmp"
+    if curl -fsSL --cacert "$ca" "$url" -o "$tmp" 2>/dev/null && tar -xzf "$tmp" -C "$TMPDIR" 2>/dev/null; then
+      rm -rf "$dest"
+      mv "$TMPDIR/${url##*/}"* "$dest" 2>/dev/null || mv "$TMPDIR/"*ohmyzsh* "$dest" 2>/dev/null
+      rm -f "$tmp"
+      return 0
+    fi
+    rm -f "$tmp"
+    return 1
+  }
   if [ ! -d "$HOME/.oh-my-zsh" ]; then
-    git clone --depth 1 https://github.com/ohmyzsh/ohmyzsh.git "$HOME/.oh-my-zsh" 2>/dev/null \
-      && echo "  ok   oh-my-zsh" || echo "  FAIL oh-my-zsh"
+    if fetch_tree "https://codeload.github.com/ohmyzsh/ohmyzsh/tar.gz/refs/heads/master" "$HOME/.oh-my-zsh"; then
+      echo "  ok   oh-my-zsh"
+    else
+      echo "  FAIL oh-my-zsh (no network or codeload unreachable)"
+    fi
   else
     echo "  ok   oh-my-zsh (present)"
   fi
@@ -73,7 +92,7 @@ setup_shell() {
     "zsh-users/zsh-syntax-highlighting" \
     "zsh-users/zsh-completions"; do
     local name="${repo##*/}"
-    [ -d "$custom/$name" ] || git clone --depth 1 "https://github.com/$repo.git" "$custom/$name" 2>/dev/null
+    [ -d "$custom/$name" ] || fetch_tree "https://codeload.github.com/$repo/tar.gz/refs/heads/master" "$custom/$name"
   done
   if [ ! -f "$HOME/.zshrc" ]; then
     cat > "$HOME/.zshrc" <<'ZRC'
