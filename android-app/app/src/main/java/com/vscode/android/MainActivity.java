@@ -99,7 +99,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private boolean seedAttempted;
 
     /**
      * Seed the terminal profiles into the store the workbench actually reads.
@@ -110,28 +109,35 @@ public class MainActivity extends Activity {
      * recognise is left untouched, and the whole thing is a no-op when the profiles are already
      * present.
      */
-    private static final String WORKBENCH_SEED_JS =
+        /**
+     * Make the title bar and the terminal's profile chevron usable with a finger.
+     *
+     * Two overlays were swallowing taps, both measured on the device rather than guessed at:
+     *
+     * 1. `.titlebar-drag-region` covers the whole title strip and exists so a desktop window can be
+     *    dragged by it. On touch, a tap there is taken as the start of a drag, so the command
+     *    centre underneath -- the "Search" box -- never receives the click. Disabling its pointer
+     *    events lets the click through; a fullscreen Android window has nothing to drag anyway.
+     *
+     * 2. The terminal panel's profile chevron is 16 px wide and overlaps the `+` beside it by
+     *    3 px (measured: `+` at x=759..781, chevron at x=778..794), so a finger aimed at the
+     *    chevron lands on `+` and opens another terminal instead of the profile list. Widening it
+     *    and lifting it above `+` makes the two targets distinct.
+     */
+    private static final String TOUCH_FIX_JS =
         "(function(){try{"
-        + "var want={'terminal.integrated.defaultProfile.linux':'termux',"
-        + "'terminal.integrated.profiles.linux':{"
-        + "'termux':{path:'/data/user/0/com.vscode.android/files/usr/bin/bash',args:['--norc','-i']},"
-        + "'ubuntu':{path:'/data/user/0/com.vscode.android/files/usr/bin/ubuntu'}}};"
-        + "var open=indexedDB.open('vscode-web-db');"
-        + "open.onerror=function(){};"
-        + "open.onsuccess=function(){var db=open.result;"
-        + "try{var names=Array.from(db.objectStoreNames);"
-        + "var tx=db.transaction(names,'readwrite');"
-        + "names.forEach(function(n){var os=tx.objectStore(n);"
-        + "var req=os.openCursor();"
-        + "req.onsuccess=function(){var c=req.result;if(!c)return;"
-        + "var v=c.value;"
-        + "if(typeof v==='string'&&v.indexOf('_vscode-remote:')>=0&&v.indexOf('settings.json')>=0){"
-        + "try{var j=JSON.parse(v);var changed=false;"
-        + "Object.keys(want).forEach(function(k){if(!(k in j)){j[k]=want[k];changed=true;}});"
-        + "if(changed){c.update(JSON.stringify(j));}}catch(e){}}"
-        + "c.continue();};});"
-        + "}catch(e){}};"
+        + "var id='dsh-touch-fix';"
+        + "var s=document.getElementById(id)||document.createElement('style');"
+        + "s.id=id;"
+        + "s.textContent='"
+        + ".titlebar-drag-region{pointer-events:none !important}"
+        + ".monaco-workbench .part.titlebar .titlebar-drag-region{pointer-events:none !important}"
+        + ".terminal-actions .action-label.codicon-chevron-down{"
+        + "min-width:26px !important;justify-content:center;position:relative;z-index:5}"
+        + "';"
+        + "document.head.appendChild(s);"
         + "}catch(e){}})();";
+
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private int shownGeneration = -1;
@@ -203,9 +209,9 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
-                if (seedAttempted) return;
-                seedAttempted = true;
-                view.evaluateJavascript(WORKBENCH_SEED_JS, null);
+                // Applied on every load, not once: the workbench recreates its DOM when the
+                // window reloads, and the stylesheet would go with it.
+                view.evaluateJavascript(TOUCH_FIX_JS, null);
             }
         });
         web.setWebChromeClient(new WebChromeClient() {
