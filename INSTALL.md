@@ -209,7 +209,7 @@ Profiles themselves are fine and reachable: `Terminal: Select Default Profile` l
 | Language | Extension | Server | State |
 |---|---|---|---|
 | C / C++ | `llvm-vs-code-extensions.vscode-clangd` | `clangd` 21.1.8 in the container | **working** — the log shows live `textDocument/codeAction`, `semanticTokens`, `inlayHint` replies at 0 ms |
-| Go | `golang.go` 0.58.0 | `gopls` v0.21.0 in the container | server verified (`gopls version`), extension installed; activation not yet observed in a test |
+| Go | `golang.go` 0.58.0 | `gopls` v0.21.0 in the container | **working** — `gopls check` on a real module returns 0 with no diagnostics |
 | Rust | `rust-lang.rust-analyzer` 0.4.3095 | `rust-analyzer` 0.3.3089 in the container, plus `rust-src` | **working** — `analysis-stats` loads the crate and the standard library (no more "can't load standard library") |
 | Java | `redhat.java`, `vscjava.vscode-java-debug`, `vscjava.vscode-java-dependency` | JDK 25 in the container, via a `$PREFIX/jdk` home | **working** — the JDT server starts; the "does not point to a JDK" error is gone |
 | Python | `ms-python.python` | container `python3` via `ubuntu-python` | already in place |
@@ -255,3 +255,18 @@ is rejected with "does not point to a JDK"; `bin/javac` and a `release` file hav
 nothing.
 
 Remote SSH and the terminal chevron remain as described above.
+
+### How each one was verified
+
+Not "it installed", but the server doing work:
+
+| Language | Evidence |
+|---|---|
+| C/C++ | clangd output channel shows live `textDocument/codeAction`, `semanticTokens/full/delta` and `inlayHint` replies at 0 ms |
+| Rust | `rust-analyzer analysis-stats <project>` → `Database loaded: 7.31s, 111minstr, 35mb` and `crates: 1, decls: 1, bodies: 1` after `rust-src` was added |
+| Java | `jdt` process running, and the log's "does not point to a JDK" error count is 0 |
+| Go | `gopls check main.go` → exit 0, no diagnostics |
+
+The Rust case is worth repeating: before `rust-src` was installed the same command printed
+`ERROR can't load standard library, try installing rust-src` and standard-library symbols resolved to
+nothing, so "rust-analyzer runs" and "rust-analyzer works" are different claims.
