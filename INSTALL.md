@@ -172,3 +172,34 @@ and one makes it premature:
 No PR was opened: a patch that adds `android` without a libc story and without offsets verified
 against a real Android Node build would be a guess, and that repository's own README requires failing
 closed rather than guessing.
+
+### cpptools is blocked by its own licence check
+
+Installing it is not enough, and rebuilding it is not the answer: after the extension activates, the
+workbench shows
+
+> The C/C++ extension may be used only with Microsoft Visual Studio Code
+
+so the extension refuses to serve outside Microsoft's own builds regardless of whether its binaries
+can run. That check is inside the extension and is not something a port should try to defeat; it is
+also why the extension is absent from Open VSX entirely.
+
+If C/C++ IntelliSense is wanted here, the honest route is `llvm-vs-code-extensions.vscode-clangd` --
+open source, on Open VSX, and `clangd` is already installed in the Ubuntu container by `setup dev`.
+That combination has not been wired up yet.
+
+### The terminal chevron
+
+Measured, twice, in both layouts:
+
+| Layout | Control | Result of a tap |
+|---|---|---|
+| tabs enabled | chevron beside `+` | lists the open terminals (two entries both named bash) |
+| tabs disabled | chevron beside `+` | creates a terminal, same as `+` |
+
+`terminal.integrated.tabs.enabled` is now `false`, which restores the classic `1: bash` selector and
+separates `+` (38 px) from the chevron (24 px, 11 px gap), but tapping the chevron still starts a
+terminal rather than offering the profile list a desktop build shows.
+
+Profiles themselves are fine and reachable: `Terminal: Select Default Profile` lists all six, and
+`+` starts `termux` because `defaultProfile.linux` and `defaultProfile.android` both name it.
