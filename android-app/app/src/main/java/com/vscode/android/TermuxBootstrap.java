@@ -721,6 +721,25 @@ public final class TermuxBootstrap {
                 + "  \"terminal.integrated.defaultProfile.android\": \"termux\",\n"
                 + "  \"dshAndroidProfilesVersion\": 3"
                 + "}\n";
+        // Also put the profiles in the workspace the workbench opens.
+        //
+        // `User` and `Machine` are read through code-server's server-side settings, and on this
+        // build the workbench's platform class is `linux` with the web workbench storing its own
+        // user settings in the browser -- so a profile set written only there can be resolved for
+        // `Terminal: Select Default Profile` and still not show up in the terminal menus. A
+        // `.vscode/settings.json` in the opened folder is read from disk either way.
+        try {
+            File wsDir = new File(new File(ctx.getFilesDir(), "home"), ".vscode");
+            //noinspection ResultOfMethodCallIgnored
+            wsDir.mkdirs();
+            // Reuse the document that was just written to the other scopes rather than slicing it:
+            // an earlier attempt cut the profile object out by index and produced invalid JSON.
+            java.nio.file.Files.write(new File(wsDir, "settings.json").toPath(),
+                    json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Throwable e) {
+            BootLog.say("workspace settings: " + e);
+        }
+
         // Write the same document to both scopes.
         //
         // terminal.integrated.profiles.* is a *machine*-scoped setting, and for the web
