@@ -719,7 +719,13 @@ public final class TermuxBootstrap {
                 // The default is picked per platform too, so `+` starts the same shell that
                 // `terminal.integrated.defaultProfile.linux` names.
                 + "  \"terminal.integrated.defaultProfile.android\": \"termux\",\n"
-                + "  \"dshAndroidProfilesVersion\": 3"
+                // Terminal tabs replace the profile dropdown with a list of open terminals: with
+                // tabs enabled, the chevron beside `+` opens "the terminals that exist", which on a
+                // phone reads as "it only offers bash". Turning tabs off restores the classic
+                // dropdown, whose list is the profiles -- which is what the same control shows on a
+                // desktop VS Code.
+                + "  \"terminal.integrated.tabs.enabled\": false,\n"
+                + "  \"dshAndroidProfilesVersion\": 4"
                 + "}\n";
         // Also put the profiles in the workspace the workbench opens.
         //
@@ -777,7 +783,7 @@ public final class TermuxBootstrap {
                     // "looked" right. Parse first; rewrite on any structural problem.
                     if (have.contains ("usr/bin/ubuntu")
                         && have.contains ("termux-app-ssh-ubuntu")
-                        && have.contains ("dshAndroidProfilesVersion\": 3")
+                        && have.contains ("dshAndroidProfilesVersion\": 4")
                         && have.contains ("defaultProfile.android")
                         && ! have.contains ("ssh -p \\\"-o\\\"")
                         && parsesAsJson (have))
