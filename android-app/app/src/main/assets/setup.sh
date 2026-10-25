@@ -498,9 +498,41 @@ PYEXT
       > "$PREFIX/bin/$n"
     chmod 755 "$PREFIX/bin/$n"
   done
-  echo "  ok   wrappers at $PREFIX/bin/{clangd,gopls}"
+  # rust-analyzer has no distro package; the upstream release binary is glibc and runs in the
+  # container. rust-src is required or it reports "can't load standard library".
+  "$PREFIX/bin/ubuntu" -c 'export DEBIAN_FRONTEND=noninteractive; apt-get install -y rust-src >/dev/null 2>&1; [ -x /root/rust-analyzer ] || { cd /root && curl -fsSL https://github.com/rust-lang/rust-analyzer/releases/latest/download/rust-analyzer-aarch64-unknown-linux-gnu.gz -o ra.gz && gunzip -c ra.gz > rust-analyzer && chmod 755 rust-analyzer; }; /root/rust-analyzer --version' 2>/dev/null | head -1
+
+  # A JDK "home" for the Java extension: it validates <home>, looks for bin/java and bin/javac, and
+  # refuses anything that is not a JDK -- a directory with only a `java` wrapper is rejected with
+  # "does not point to a JDK".
+  mkdir -p "$PREFIX/jdk/bin"
+  printf 'JAVA_VERSION="25.0.4.1"\n' > "$PREFIX/jdk/release"
+  for b in java javac; do
+    printf '%s\n' \
+      '#!/system/bin/sh' \
+      "F=$FILES" \
+      'H="$F/home"; args=""' \
+      'for a in "$@"; do case "$a" in "$H"*) a="/workspace${a#$H}" ;; esac; args="$args $a"; done' \
+      "exec \"\$F/usr/bin/ubuntu\" -c 'exec /usr/bin/$b \$@' sh \$args" \
+      > "$PREFIX/jdk/bin/$b"
+    chmod 755 "$PREFIX/jdk/bin/$b"
+  done
+
+  for n in rust-analyzer; do
+    printf '%s\n' \
+      '#!/system/bin/sh' \
+      "F=$FILES" \
+      'H="$F/home"; args=""' \
+      'for a in "$@"; do case "$a" in "$H"*) a="/workspace${a#$H}" ;; esac; args="$args $a"; done' \
+      "exec \"\$F/usr/bin/ubuntu\" -c 'export HOME=/root; exec /root/$n \$@' sh \$args" \
+      > "$PREFIX/bin/$n"
+    chmod 755 "$PREFIX/bin/$n"
+  done
+  echo "  ok   wrappers at $PREFIX/bin/{clangd,gopls,rust-analyzer} and $PREFIX/jdk/bin/{java,javac}"
   "$PREFIX/bin/clangd" --version 2>/dev/null | head -1
   "$PREFIX/bin/gopls" version 2>/dev/null | head -1
+  "$PREFIX/bin/rust-analyzer" --version 2>/dev/null | head -1
+  "$PREFIX/jdk/bin/java" -version 2>&1 | head -1
 }
 
 case "${1:-all}" in

@@ -210,8 +210,8 @@ Profiles themselves are fine and reachable: `Terminal: Select Default Profile` l
 |---|---|---|---|
 | C / C++ | `llvm-vs-code-extensions.vscode-clangd` | `clangd` 21.1.8 in the container | **working** — the log shows live `textDocument/codeAction`, `semanticTokens`, `inlayHint` replies at 0 ms |
 | Go | `golang.go` 0.58.0 | `gopls` v0.21.0 in the container | server verified (`gopls version`), extension installed; activation not yet observed in a test |
-| Rust | `rust-lang.rust-analyzer` 0.4.3095 | none yet | installed, not wired |
-| Java | `redhat.java`, `vscjava.vscode-java-debug`, `vscjava.vscode-java-dependency` | none yet | installed, not wired |
+| Rust | `rust-lang.rust-analyzer` 0.4.3095 | `rust-analyzer` 0.3.3089 in the container, plus `rust-src` | **working** — `analysis-stats` loads the crate and the standard library (no more "can't load standard library") |
+| Java | `redhat.java`, `vscjava.vscode-java-debug`, `vscjava.vscode-java-dependency` | JDK 25 in the container, via a `$PREFIX/jdk` home | **working** — the JDT server starts; the "does not point to a JDK" error is gone |
 | Python | `ms-python.python` | container `python3` via `ubuntu-python` | already in place |
 | Remote | `jeanp413.open-remote-ssh` | — | installed; client works, target needs a running sshd |
 
@@ -230,3 +230,28 @@ Two settings in the generated document exist only because of this split:
 
 `ms-vscode.cpptools` is kept on disk as `ms-vscode.cpptools-1.35.4-linux-arm64.disabled` for
 reference; it is unusable for the licence reason below.
+
+### Why every language needs three things
+
+A language is only usable here when all three hold, and each failed at first:
+
+1. **The extension** must be in `extensions.json` — copying a directory into `extensions/` is not
+   enough. Eight extensions were installed by hand and none of them activated until entries were
+   added to that index; the extension host simply ignored the directories.
+2. **The server** is a glibc binary and lives in the container, so a host-side wrapper has to
+   re-enter it.
+3. **The paths** must resolve. Wrappers can rewrite argv, but a language server gets its root from
+   the LSP `initialize` message, which argv rewriting cannot touch: rust-analyzer reported
+   `failed to find any projects in [/data/user/0/<pkg>/files]` while the files sat in `/workspace`.
+   The fix is a bind mount of the app's data directory **at its own path**
+   (`-b "$F":"$F"`), after which every path the editor sends already resolves — for every server,
+   with no translation.
+
+The Java extension adds a fourth: it validates the JDK home. A directory containing only `bin/java`
+is rejected with "does not point to a JDK"; `bin/javac` and a `release` file have to be there too.
+
+`rust-src` is separate from `rustc`: without it rust-analyzer logs
+`can't load standard library, try installing rust-src`, and standard-library symbols resolve to
+nothing.
+
+Remote SSH and the terminal chevron remain as described above.

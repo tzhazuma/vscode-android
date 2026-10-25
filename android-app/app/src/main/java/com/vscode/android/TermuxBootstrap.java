@@ -317,6 +317,14 @@ public final class TermuxBootstrap {
                 + "  -b \"$F/home\":/workspace \\\n"
                 + "  -b \"$F/home\":/root \\\n"
                 + "  -b \"$F/usr\":/termux \\\n"
+                // The app's own data directory, at the same path inside the container.
+                //
+                // Language servers get their root from the LSP initialize message, not from argv,
+                // so a wrapper cannot rewrite it: rust-analyzer reported
+                // "failed to find any projects in [/data/user/0/<pkg>/files]" while /workspace held
+                // the files. Binding the path at the identical location means every path the editor
+                // sends already resolves, for every server, with no translation anywhere.
+                + "  -b \"$F\":\"$F\" \\\n"
                 + "  -w /root \\\n"
                 + "  /usr/bin/env -i HOME=/root TERM=\"${TERM:-xterm-256color}\" \\\n"
                 + "    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\\n"
@@ -737,7 +745,13 @@ public final class TermuxBootstrap {
                 + "  \"go.goplsPath\": \"" + p + "/bin/gopls\",\n"
                 + "  \"go.toolsManagement.autoUpdate\": false,\n"
                 + "  \"go.useLanguageServer\": true,\n"
-                + "  \"dshAndroidProfilesVersion\": 6"
+                // rust-analyzer and the JVM are container binaries too. The Java extension expects a
+                // JDK *home* and spawns <home>/bin/java, so $PREFIX/jdk mirrors that layout and
+                // forwards into the container.
+                + "  \"rust-analyzer.server.path\": \"" + p + "/bin/rust-analyzer\",\n"
+                + "  \"java.jdt.ls.java.home\": \"" + p + "/jdk\",\n"
+                + "  \"java.import.gradle.enabled\": false,\n"
+                + "  \"dshAndroidProfilesVersion\": 7"
                 + "}\n";
         // Also put the profiles in the workspace the workbench opens.
         //
@@ -795,7 +809,7 @@ public final class TermuxBootstrap {
                     // "looked" right. Parse first; rewrite on any structural problem.
                     if (have.contains ("usr/bin/ubuntu")
                         && have.contains ("termux-app-ssh-ubuntu")
-                        && have.contains ("dshAndroidProfilesVersion\": 6")
+                        && have.contains ("dshAndroidProfilesVersion\": 7")
                         && have.contains ("defaultProfile.android")
                         && ! have.contains ("ssh -p \\\"-o\\\"")
                         && parsesAsJson (have))
