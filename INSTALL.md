@@ -118,3 +118,57 @@ The first two iterations of this document claimed the chevron was broken. It was
 file had been corrupted by a bad edit, so `terminal.integrated.profiles.*` was unparseable and the
 workbench fell back to auto-detected shells. After that was fixed the profile list came back, but the
 chevron still shows terminals, because that is what it lists.
+
+## The C/C++ extension
+
+`ms-vscode.cpptools` is not on Open VSX, and its binaries cannot run on Android even when it is
+installed: `file` reports `interpreter ./libc.so`, a relative interpreter path, so it needs the
+directory that holds `libc.so` and a glibc userland. Neither exists on bionic.
+
+`setup cpptools` does what works:
+
+1. download the platform VSIX from Microsoft's gallery
+   (`.../vsextensions/cpptools/<ver>/vspackage?targetPlatform=linux-arm64`) -- the gallery serves it
+   **gzip-wrapped**, so the payload is not a zip until it is decompressed; `code-server
+   --install-extension` fails on it with `code: 'Extract'` for exactly that reason;
+2. unpack `extension/` into the extensions directory by hand;
+3. copy the whole `bin/` directory into the container at `/opt/cppbin` (whole directory: the relative
+   interpreter resolves against the working directory);
+4. replace the four binaries with wrappers that `exec ubuntu -c 'cd /opt/cppbin && exec ./<name> "$@"'`.
+
+Verified on the device: `bin/cpptools --version` reports `1.35.4.0` from the host side, the extension
+activates (`ExtensionService#_doActivateExtension ms-vscode.cpptools, activationEvent: 'onLanguage:c'`),
+and `bin/cpptools` works inside the container. **Not verified**: the language server's JSON-RPC over
+stdio across the proot hop -- after opening a `.c` file no `cpptools` process stays alive, so
+IntelliSense may not actually be serving. Treat the install as done and the language server as
+unproven.
+
+## Remote SSH
+
+`setup vscode` installs `jeanp413.open-remote-ssh`, the community implementation of the Remote-SSH
+protocol. Microsoft's own `ms-vscode-remote.*` extensions are proprietary, are not published to Open
+VSX, and cannot be installed by code-server.
+
+The client side works: `$PREFIX/bin/ssh` connects out. What it connects *to* needs a running sshd --
+the machine used for testing had Remote Login off and answered `Connection refused` on port 22. Turn
+on Remote Login on the target, put an entry in `files/home/.ssh/config`, and it should work; that
+last hop has not been exercised.
+
+## DeepSeek Harness
+
+The Android build runs; what it cannot do is start without `--expose-internals`, because
+`node-addon-require-builtin` has no Android build. Two facts make an upstream contribution plausible
+and one makes it premature:
+
+- `deepseek-ai/deepseek-harness` is the real source repository (314 MB, TypeScript monorepo), so it
+  takes PRs.
+- `native/system/scripts/build.ts` refuses any host that is not linux or darwin:
+  `if (process.platform !== 'linux' && process.platform !== 'darwin')`. Android reports `android`.
+- But the script also derives a libc of `glibc` or `musl` from `glibcVersionRuntime`, and Android is
+  neither; and the addon that actually blocks startup lives in a separate repository
+  (`deepseek-ai/dsh-node-addon-require-builtin`) which **has issues disabled**, leaving a PR as the
+  only channel.
+
+No PR was opened: a patch that adds `android` without a libc story and without offsets verified
+against a real Android Node build would be a guess, and that repository's own README requires failing
+closed rather than guessing.

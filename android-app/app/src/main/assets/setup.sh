@@ -378,6 +378,64 @@ setup_ssh() {
   fi
 }
 
+
+# The C/C++ extension is not on Open VSX, and its native binaries cannot run on bionic at all, so it
+# takes three steps: fetch the platform VSIX from Microsoft's marketplace, put the binaries where the
+# container can run them, and replace the host-side binaries with wrappers that re-enter the container.
+setup_cpptools() {
+  say "C/C++ extension (cpptools)"
+  local ext="$FILES/.local/share/code-server/extensions"
+  local version="${1:-1.35.4}"
+  local work="$FILES/tmp"
+
+  if [ -d "$ext/ms-vscode.cpptools-${version}-linux-arm64" ]; then
+    echo "  ok   already installed ($version)"
+  else
+    local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-vscode/vsextensions/cpptools/${version}/vspackage?targetPlatform=linux-arm64"
+    echo "  ..   downloading $version (about 115 MB)"
+    if ! curl -fsSL --cacert "$PREFIX/etc/tls/cert.pem" "$url" -o "$work/cpp.gz" 2>/dev/null; then
+      echo "  FAIL could not download the VSIX"
+      return 1
+    fi
+    # The gallery serves the VSIX gzip-wrapped, so it is not a zip until it is decompressed.
+    gunzip -c "$work/cpp.gz" > "$work/cpp.zip" 2>/dev/null || cp "$work/cpp.gz" "$work/cpp.zip"
+    rm -rf "$work/cppx"; mkdir -p "$work/cppx"
+    "$PREFIX/bin/python3" -c "
+import zipfile,sys
+zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+" "$work/cpp.zip" "$work/cppx" || { echo "  FAIL could not extract"; return 1; }
+    mkdir -p "$ext"
+    cp -a "$work/cppx/extension" "$ext/ms-vscode.cpptools-${version}-linux-arm64"
+    rm -f "$work/cpp.gz" "$work/cpp.zip"; rm -rf "$work/cppx"
+    echo "  ok   installed $version"
+  fi
+
+  local bin="$ext/ms-vscode.cpptools-${version}-linux-arm64/bin"
+  # The ELF interpreter is the relative path "./libc.so", so the whole directory has to move
+  # together and it only runs from that directory.
+  mkdir -p "$FILES/home/.cppbin"
+  cp -a "$bin/." "$FILES/home/.cppbin/" 2>/dev/null
+  chmod -R 755 "$FILES/home/.cppbin" 2>/dev/null
+  "$PREFIX/bin/ubuntu" -c 'mkdir -p /opt/cppbin && cp -a /workspace/.cppbin/. /opt/cppbin/ && chmod -R 755 /opt/cppbin' >/dev/null 2>&1 \
+    && echo "  ok   binaries are in the container at /opt/cppbin" \
+    || echo "  FAIL could not copy the binaries into the container"
+
+  # Wrappers written with printf, not a heredoc: `sh` needs a writable /tmp for heredocs and this
+  # process runs under run-as, which has none.
+  for b in cpptools cpptools-srv cpptools-srv2 cpptools-wordexp; do
+    [ -f "$FILES/home/.cppbin/$b" ] || continue
+    printf '%s\n' \
+      '#!/system/bin/sh' \
+      "# cpptools is a glibc build whose interpreter is \"./libc.so\"; it cannot run on bionic." \
+      "# It runs inside the container, from the directory that holds libc.so." \
+      "exec $PREFIX/bin/ubuntu -c 'cd /opt/cppbin && exec ./$b \"\$@\"' sh \"\$@\"" \
+      > "$bin/$b"
+    chmod 755 "$bin/$b"
+  done
+  echo "  ok   host-side wrappers installed"
+  "$bin/cpptools" --version 2>/dev/null | head -1
+}
+
 case "${1:-all}" in
   shell) setup_shell ;;
   dev)   setup_dev ;;
@@ -385,7 +443,8 @@ case "${1:-all}" in
   opencode) setup_opencode ;;
   vscode) setup_vscode ;;
   ssh)    setup_ssh ;;
+  cpptools) setup_cpptools ;;
   all)   setup_shell; setup_dev; setup_ssh; setup_brew; setup_vscode; setup_opencode ;;
-  *) echo "usage: setup [all|shell|dev|ssh|brew|vscode|opencode]" >&2; exit 2 ;;
+  *) echo "usage: setup [all|shell|dev|ssh|brew|vscode|cpptools|opencode]" >&2; exit 2 ;;
 esac
 say "done"
