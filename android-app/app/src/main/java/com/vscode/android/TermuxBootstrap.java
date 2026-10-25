@@ -725,7 +725,19 @@ public final class TermuxBootstrap {
                 // dropdown, whose list is the profiles -- which is what the same control shows on a
                 // desktop VS Code.
                 + "  \"terminal.integrated.tabs.enabled\": false,\n"
-                + "  \"dshAndroidProfilesVersion\": 4"
+                // clangd runs inside the container (glibc), so the extension gets a host-side wrapper that
+                // re-enters it and translates the workspace path; without this the extension reports
+                // "The clangd language server is not installed" even though the binary is present.
+                + "  \"clangd.path\": \"" + p + "/bin/clangd\",\n"
+                + "  \"clangd.arguments\": [\"--background-index\", \"--clang-tidy=false\"],\n"
+                + "  \"C_Cpp.intelliSenseEngine\": \"disabled\",\n"
+                // gopls runs in the container; point the extension at the wrapper and stop it from
+                // trying to `go install` its own copy, which segfaults under proot when it has to
+                // fetch a newer toolchain.
+                + "  \"go.goplsPath\": \"" + p + "/bin/gopls\",\n"
+                + "  \"go.toolsManagement.autoUpdate\": false,\n"
+                + "  \"go.useLanguageServer\": true,\n"
+                + "  \"dshAndroidProfilesVersion\": 6"
                 + "}\n";
         // Also put the profiles in the workspace the workbench opens.
         //
@@ -783,7 +795,7 @@ public final class TermuxBootstrap {
                     // "looked" right. Parse first; rewrite on any structural problem.
                     if (have.contains ("usr/bin/ubuntu")
                         && have.contains ("termux-app-ssh-ubuntu")
-                        && have.contains ("dshAndroidProfilesVersion\": 4")
+                        && have.contains ("dshAndroidProfilesVersion\": 6")
                         && have.contains ("defaultProfile.android")
                         && ! have.contains ("ssh -p \\\"-o\\\"")
                         && parsesAsJson (have))

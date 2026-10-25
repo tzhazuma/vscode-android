@@ -436,6 +436,73 @@ zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
   "$bin/cpptools" --version 2>/dev/null | head -1
 }
 
+
+# Language servers live in the container (glibc); the extensions that spawn them run on the host
+# (bionic). Every one therefore needs a wrapper that re-enters the container and rewrites host paths
+# to the /workspace bind mount.
+setup_langs() {
+  say "language extensions and servers"
+  local ext="$FILES/.local/share/code-server/extensions"
+  mkdir -p "$ext"
+
+  fetch_ext() {
+    local id="$1"; local pub="${id%%.*}"; local name="${id#*.}"
+    [ -d "$ext/$pub.$name-"* ] && { echo "  ok   $id (present)"; return 0; }
+    "$PREFIX/bin/python3" - "$id" "$pub" "$name" "$ext" <<'PYEXT'
+import json, os, shutil, sys, urllib.request, zipfile
+eid, pub, name, ext = sys.argv[1:5]
+F = "/data/user/0/com.vscode.android/files"
+hdr = {"User-Agent": "curl/8"}
+try:
+    meta = json.load(urllib.request.urlopen(urllib.request.Request(
+        "https://open-vsx.org/api/%s/%s" % (pub, name), headers=hdr), timeout=60))
+    ver = meta["version"]
+    url = "https://open-vsx.org/api/%s/%s/%s/file/%s.%s-%s.vsix" % (pub, name, ver, pub, name, ver)
+    vsix = F + "/tmp/" + name + ".vsix"
+    with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=300) as r, open(vsix, "wb") as f:
+        shutil.copyfileobj(r, f, 1 << 20)
+    d = F + "/tmp/" + name + "_x"
+    if os.path.isdir(d): shutil.rmtree(d)
+    os.makedirs(d); zipfile.ZipFile(vsix).extractall(d)
+    pkg = json.load(open(os.path.join(d, "extension", "package.json")))
+    target = os.path.join(ext, "%s.%s-%s" % (pkg["publisher"], pkg["name"], pkg["version"]))
+    if os.path.isdir(target): shutil.rmtree(target)
+    shutil.copytree(os.path.join(d, "extension"), target)
+    os.remove(vsix); shutil.rmtree(d)
+    print("  ok   %s %s" % (eid, ver))
+except Exception as e:
+    print("  FAIL %s (%s)" % (eid, str(e)[:50]))
+PYEXT
+  }
+
+  for e in llvm-vs-code-extensions.vscode-clangd golang.go rust-lang.rust-analyzer \
+           redhat.java vscjava.vscode-java-debug jeanp413.open-remote-ssh; do
+    fetch_ext "$e"
+  done
+
+  # clangd and gopls, both inside the container.
+  "$PREFIX/bin/ubuntu" -c 'export DEBIAN_FRONTEND=noninteractive; command -v clangd >/dev/null || apt-get install -y clangd >/dev/null 2>&1; command -v clangd' >/dev/null 2>&1 \
+    && echo "  ok   clangd in the container" || echo "  FAIL clangd"
+  "$PREFIX/bin/ubuntu" -c 'export HOME=/root GOPROXY=https://goproxy.cn,direct GOTOOLCHAIN=local; [ -x /root/go/bin/gopls ] || /usr/bin/go install golang.org/x/tools/gopls@v0.21.0 >/dev/null 2>&1; [ -x /root/go/bin/gopls ]' >/dev/null 2>&1 \
+    && echo "  ok   gopls in the container" || echo "  FAIL gopls"
+
+  for pair in "clangd:/usr/bin/clangd" "gopls:/root/go/bin/gopls"; do
+    local n="${pair%%:*}"; local b="${pair#*:}"
+    printf '%s\n' \
+      '#!/system/bin/sh' \
+      "# $n is a glibc binary in the container; this re-enters it and maps the workspace path." \
+      "F=$FILES" \
+      'H="$F/home"; args=""' \
+      'for a in "$@"; do case "$a" in "$H"*) a="/workspace${a#$H}" ;; esac; args="$args $a"; done' \
+      "exec \"\$F/usr/bin/ubuntu\" -c 'export HOME=/root PATH=/root/go/bin:/usr/local/bin:/usr/bin:/bin; exec $b \"\$@\"' sh \$args" \
+      > "$PREFIX/bin/$n"
+    chmod 755 "$PREFIX/bin/$n"
+  done
+  echo "  ok   wrappers at $PREFIX/bin/{clangd,gopls}"
+  "$PREFIX/bin/clangd" --version 2>/dev/null | head -1
+  "$PREFIX/bin/gopls" version 2>/dev/null | head -1
+}
+
 case "${1:-all}" in
   shell) setup_shell ;;
   dev)   setup_dev ;;
@@ -444,7 +511,8 @@ case "${1:-all}" in
   vscode) setup_vscode ;;
   ssh)    setup_ssh ;;
   cpptools) setup_cpptools ;;
-  all)   setup_shell; setup_dev; setup_ssh; setup_brew; setup_vscode; setup_opencode ;;
-  *) echo "usage: setup [all|shell|dev|ssh|brew|vscode|cpptools|opencode]" >&2; exit 2 ;;
+  langs)  setup_langs ;;
+  all)   setup_shell; setup_dev; setup_ssh; setup_brew; setup_vscode; setup_langs; setup_opencode ;;
+  *) echo "usage: setup [all|shell|dev|ssh|brew|vscode|cpptools|langs|opencode]" >&2; exit 2 ;;
 esac
 say "done"

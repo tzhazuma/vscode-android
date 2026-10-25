@@ -203,3 +203,30 @@ terminal rather than offering the profile list a desktop build shows.
 
 Profiles themselves are fine and reachable: `Terminal: Select Default Profile` lists all six, and
 `+` starts `termux` because `defaultProfile.linux` and `defaultProfile.android` both name it.
+
+## Language support
+
+| Language | Extension | Server | State |
+|---|---|---|---|
+| C / C++ | `llvm-vs-code-extensions.vscode-clangd` | `clangd` 21.1.8 in the container | **working** — the log shows live `textDocument/codeAction`, `semanticTokens`, `inlayHint` replies at 0 ms |
+| Go | `golang.go` 0.58.0 | `gopls` v0.21.0 in the container | server verified (`gopls version`), extension installed; activation not yet observed in a test |
+| Rust | `rust-lang.rust-analyzer` 0.4.3095 | none yet | installed, not wired |
+| Java | `redhat.java`, `vscjava.vscode-java-debug`, `vscjava.vscode-java-dependency` | none yet | installed, not wired |
+| Python | `ms-python.python` | container `python3` via `ubuntu-python` | already in place |
+| Remote | `jeanp413.open-remote-ssh` | — | installed; client works, target needs a running sshd |
+
+Every language server is a glibc binary in the container, and every extension runs on bionic, so each
+one needs a host-side wrapper that re-enters the container **and rewrites host paths to `/workspace`**
+— a server handed `/data/user/0/<pkg>/files/home/foo` cannot find it. `setup langs` does that for
+`clangd` and `gopls` and writes the matching `clangd.path` / `go.goplsPath` settings.
+
+Two settings in the generated document exist only because of this split:
+
+- `clangd.path` — without it the extension reports "The clangd language server is not installed" even
+  though `$PREFIX/bin/clangd` runs, because it looks for `clangd` on the host PATH;
+- `go.toolsManagement.autoUpdate: false` — `go install` fetching a newer toolchain **segfaults under
+  proot** ("Segmentation fault ... talloc report on 'null_context'"), so gopls is pinned to v0.21.0,
+  the newest that the container's Go 1.26.8 will build with `GOTOOLCHAIN=local`.
+
+`ms-vscode.cpptools` is kept on disk as `ms-vscode.cpptools-1.35.4-linux-arm64.disabled` for
+reference; it is unusable for the licence reason below.

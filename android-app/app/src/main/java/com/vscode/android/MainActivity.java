@@ -210,10 +210,10 @@ public class MainActivity extends Activity {
         + "for(var i=0;i<groups.length;i++){"
         + "var plus=groups[i].querySelector('.action-label.codicon-plus');if(!plus)continue;"
         + "var drop=groups[i].querySelector('.dropdown-action-container');if(!drop)continue;"
-        + "drop.style.marginLeft='14px';"
+        + "drop.style.marginLeft='18px';"
         + "var chev=drop.querySelector('.action-label');"
-        + "if(chev){chev.style.minWidth='32px';chev.style.minHeight='26px';}"
-        + "plus.style.minWidth='32px';plus.style.minHeight='26px';"
+        + "if(chev){chev.style.minWidth='64px';chev.style.minHeight='30px';}"
+        + "plus.style.minWidth='44px';plus.style.minHeight='30px';"
         + "}};"
         + "setInterval(fix,1500);fix();}"
         // Deliberately no synthetic-click handler here.
